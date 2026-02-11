@@ -1,8 +1,12 @@
 package provider
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
+	"io"
+	"net/http"
 
 	"github.com/hashicorp/terraform-plugin-framework/datasource"
 	"github.com/hashicorp/terraform-plugin-framework/datasource/schema"
@@ -80,14 +84,7 @@ func (d *PageDataSource) Read(ctx context.Context, req datasource.ReadRequest, r
 		return
 	}
 
-	result, err := d.client.Search.Do(ctx, &notionapi.SearchRequest{
-		Query: config.Query.ValueString(),
-		Filter: notionapi.SearchFilter{
-			Value:    "page",
-			Property: "object",
-		},
-		PageSize: 1,
-	})
+	result, err := d.searchPageRaw(ctx, config.Query.ValueString())
 	if err != nil {
 		resp.Diagnostics.AddError("Error searching for page", err.Error())
 		return
@@ -99,28 +96,86 @@ func (d *PageDataSource) Read(ctx context.Context, req datasource.ReadRequest, r
 		return
 	}
 
-	obj := result.Results[0]
-	page, ok := obj.(*notionapi.Page)
-	if !ok {
-		resp.Diagnostics.AddError("Unexpected search result type", "Expected a page object from search results.")
-		return
-	}
-
-	config.ID = types.StringValue(normalizeID(string(page.ID)))
+	page := result.Results[0]
+	config.ID = types.StringValue(normalizeID(page.ID))
 	config.URL = types.StringValue(page.URL)
 
-	if page.Parent.Type == notionapi.ParentTypePageID {
-		config.ParentPageID = types.StringValue(normalizeID(string(page.Parent.PageID)))
+	if page.Parent.Type == "page_id" && page.Parent.PageID != "" {
+		config.ParentPageID = types.StringValue(normalizeID(page.Parent.PageID))
 	} else {
 		config.ParentPageID = types.StringValue("")
 	}
 
+	// Extract title from properties
 	for _, prop := range page.Properties {
-		if tp, ok := prop.(*notionapi.TitleProperty); ok {
-			config.Title = types.StringValue(richTextToPlain(tp.Title))
+		if prop.Type == "title" {
+			config.Title = types.StringValue(extractRichText(prop.Title))
 			break
 		}
 	}
 
 	resp.Diagnostics.Append(resp.State.Set(ctx, &config)...)
+}
+
+type rawPageSearchResponse struct {
+	Results []rawPageResult `json:"results"`
+}
+
+type rawPageResult struct {
+	ID         string                 `json:"id"`
+	URL        string                 `json:"url"`
+	Parent     rawParent              `json:"parent"`
+	Properties map[string]rawProperty `json:"properties"`
+}
+
+type rawParent struct {
+	Type   string `json:"type"`
+	PageID string `json:"page_id,omitempty"`
+}
+
+func (d *PageDataSource) searchPageRaw(ctx context.Context, query string) (*rawPageSearchResponse, error) {
+	body := map[string]interface{}{
+		"query":     query,
+		"page_size": 1,
+		"filter": map[string]string{
+			"value":    "page",
+			"property": "object",
+		},
+	}
+
+	bodyBytes, err := json.Marshal(body)
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal request: %w", err)
+	}
+
+	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, "https://api.notion.com/v1/search", bytes.NewReader(bodyBytes))
+	if err != nil {
+		return nil, fmt.Errorf("failed to create request: %w", err)
+	}
+
+	httpReq.Header.Set("Authorization", fmt.Sprintf("Bearer %s", d.client.Token.String()))
+	httpReq.Header.Set("Notion-Version", "2022-06-28")
+	httpReq.Header.Set("Content-Type", "application/json")
+
+	httpResp, err := http.DefaultClient.Do(httpReq)
+	if err != nil {
+		return nil, fmt.Errorf("failed to search: %w", err)
+	}
+	defer httpResp.Body.Close()
+
+	respBody, err := io.ReadAll(httpResp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read response: %w", err)
+	}
+
+	if httpResp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("Notion API error (status %d): %s", httpResp.StatusCode, string(respBody))
+	}
+
+	var result rawPageSearchResponse
+	if err := json.Unmarshal(respBody, &result); err != nil {
+		return nil, fmt.Errorf("failed to parse response: %w", err)
+	}
+
+	return &result, nil
 }
