@@ -12,7 +12,7 @@ var version = "dev"
 
 func main() {
 	opts := providerserver.ServeOpts{
-		Address: "registry.terraform.io/andrew/notion",
+		Address: "registry.terraform.io/delize/notion",
 	}
 
 	err := providerserver.Serve(context.Background(), provider.New(version), opts)

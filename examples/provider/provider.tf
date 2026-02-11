@@ -1,7 +1,7 @@
 terraform {
   required_providers {
     notion = {
-      source = "registry.terraform.io/andrew/notion"
+      source = "delize/notion"
     }
   }
 }
