@@ -5,7 +5,7 @@ builds:
     flags:
       - -trimpath
     ldflags:
-      - "-s -w"
+      - "-s -w -X main.version={{ .Version }}"
     goos:
       - linux
       - darwin
@@ -35,7 +35,8 @@ signs:
       - "${artifact}"
 
 release:
-  draft: true
+  extra_files:
+    - glob: terraform-registry-manifest.json
 
 changelog:
   sort: asc
