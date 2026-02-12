@@ -2,12 +2,12 @@
 page_title: "Notion Provider"
 subcategory: ""
 description: |-
-  The Notion provider allows you to manage Notion pages, databases, and database properties using Terraform.
+  The Notion provider allows you to manage Notion pages, blocks, databases, and database properties using Terraform.
 ---
 
 # Notion Provider
 
-The Notion provider allows you to manage [Notion](https://www.notion.so/) resources using Terraform. It supports creating and managing pages, databases, database properties, and database entries through the [Notion API](https://developers.notion.com/).
+The Notion provider allows you to manage [Notion](https://www.notion.so/) resources using Terraform. It supports creating and managing pages, content blocks, databases, database properties, and database entries through the [Notion API](https://developers.notion.com/).
 
 ## Authentication
 
@@ -44,6 +44,7 @@ provider "notion" {
 
 ### Core Resources
 - `notion_page` - Manage Notion pages
+- `notion_block` - Manage content blocks on pages (paragraphs, headings, lists, code, etc.)
 - `notion_database` - Manage Notion databases
 - `notion_database_entry` - Manage entries (rows) in Notion databases
 
