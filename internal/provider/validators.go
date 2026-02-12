@@ -135,3 +135,86 @@ func (v rollupFunctionValidator) ValidateString(_ context.Context, req validator
 func RollupFunctionValidator() validator.String {
 	return rollupFunctionValidator{}
 }
+
+// Valid block types for notion_block resource.
+var validBlockTypes = []string{
+	"paragraph", "heading_1", "heading_2", "heading_3",
+	"bulleted_list_item", "numbered_list_item", "to_do", "toggle",
+	"quote", "callout", "code", "equation",
+	"divider", "table_of_contents", "bookmark", "embed", "image",
+	"synced_block", "column_list", "column",
+}
+
+// Valid block colors (10 foreground + 10 background).
+var validBlockColors = []string{
+	"default", "gray", "brown", "orange", "yellow",
+	"green", "blue", "purple", "pink", "red",
+	"gray_background", "brown_background", "orange_background", "yellow_background",
+	"green_background", "blue_background", "purple_background", "pink_background", "red_background",
+}
+
+// blockTypeValidator validates that a string is a valid Notion block type.
+type blockTypeValidator struct{}
+
+func (v blockTypeValidator) Description(_ context.Context) string {
+	return fmt.Sprintf("value must be one of: %s", strings.Join(validBlockTypes, ", "))
+}
+
+func (v blockTypeValidator) MarkdownDescription(ctx context.Context) string {
+	return v.Description(ctx)
+}
+
+func (v blockTypeValidator) ValidateString(_ context.Context, req validator.StringRequest, resp *validator.StringResponse) {
+	if req.ConfigValue.IsNull() || req.ConfigValue.IsUnknown() {
+		return
+	}
+	val := req.ConfigValue.ValueString()
+	for _, t := range validBlockTypes {
+		if val == t {
+			return
+		}
+	}
+	resp.Diagnostics.AddAttributeError(
+		req.Path,
+		"Invalid Block Type",
+		fmt.Sprintf("Expected one of: %s, got: %s", strings.Join(validBlockTypes, ", "), val),
+	)
+}
+
+// BlockTypeValidator returns a validator that checks for valid Notion block types.
+func BlockTypeValidator() validator.String {
+	return blockTypeValidator{}
+}
+
+// blockColorValidator validates that a string is a valid Notion block color.
+type blockColorValidator struct{}
+
+func (v blockColorValidator) Description(_ context.Context) string {
+	return fmt.Sprintf("value must be one of: %s", strings.Join(validBlockColors, ", "))
+}
+
+func (v blockColorValidator) MarkdownDescription(ctx context.Context) string {
+	return v.Description(ctx)
+}
+
+func (v blockColorValidator) ValidateString(_ context.Context, req validator.StringRequest, resp *validator.StringResponse) {
+	if req.ConfigValue.IsNull() || req.ConfigValue.IsUnknown() {
+		return
+	}
+	val := req.ConfigValue.ValueString()
+	for _, c := range validBlockColors {
+		if val == c {
+			return
+		}
+	}
+	resp.Diagnostics.AddAttributeError(
+		req.Path,
+		"Invalid Block Color",
+		fmt.Sprintf("Expected one of: %s, got: %s", strings.Join(validBlockColors, ", "), val),
+	)
+}
+
+// BlockColorValidator returns a validator that checks for valid Notion block colors.
+func BlockColorValidator() validator.String {
+	return blockColorValidator{}
+}

@@ -78,6 +78,7 @@ func (p *NotionProvider) Configure(ctx context.Context, req provider.ConfigureRe
 func (p *NotionProvider) Resources(_ context.Context) []func() resource.Resource {
 	return []func() resource.Resource{
 		NewPageResource,
+		NewBlockResource,
 		NewDatabaseResource,
 		NewDatabaseEntryResource,
 		NewDatabasePropertySelectResource,
