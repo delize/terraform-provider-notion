@@ -202,6 +202,9 @@ func (v blockColorValidator) ValidateString(_ context.Context, req validator.Str
 		return
 	}
 	val := req.ConfigValue.ValueString()
+	if val == "" {
+		return
+	}
 	for _, c := range validBlockColors {
 		if val == c {
 			return

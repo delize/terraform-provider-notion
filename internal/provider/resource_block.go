@@ -7,8 +7,10 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/path"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema"
+	"github.com/hashicorp/terraform-plugin-framework/resource/schema/booldefault"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/boolplanmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/planmodifier"
+	"github.com/hashicorp/terraform-plugin-framework/resource/schema/stringdefault"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/stringplanmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/schema/validator"
 	"github.com/hashicorp/terraform-plugin-framework/types"
@@ -96,11 +98,13 @@ func (r *BlockResource) Schema(_ context.Context, _ resource.SchemaRequest, resp
 				Description: "Plain text content of the block.",
 				Optional:    true,
 				Computed:    true,
+				Default:     stringdefault.StaticString(""),
 			},
 			"color": schema.StringAttribute{
 				Description: "Block color (e.g. default, red, blue_background).",
 				Optional:    true,
 				Computed:    true,
+				Default:     stringdefault.StaticString(""),
 				Validators: []validator.String{
 					BlockColorValidator(),
 				},
@@ -109,36 +113,43 @@ func (r *BlockResource) Schema(_ context.Context, _ resource.SchemaRequest, resp
 				Description: "Whether a heading block is toggleable.",
 				Optional:    true,
 				Computed:    true,
+				Default:     booldefault.StaticBool(false),
 			},
 			"checked": schema.BoolAttribute{
 				Description: "Whether a to-do block is checked.",
 				Optional:    true,
 				Computed:    true,
+				Default:     booldefault.StaticBool(false),
 			},
 			"icon": schema.StringAttribute{
 				Description: "Emoji icon for callout blocks.",
 				Optional:    true,
 				Computed:    true,
+				Default:     stringdefault.StaticString(""),
 			},
 			"language": schema.StringAttribute{
 				Description: "Programming language for code blocks.",
 				Optional:    true,
 				Computed:    true,
+				Default:     stringdefault.StaticString(""),
 			},
 			"caption": schema.StringAttribute{
 				Description: "Caption text for code, bookmark, and image blocks.",
 				Optional:    true,
 				Computed:    true,
+				Default:     stringdefault.StaticString(""),
 			},
 			"url": schema.StringAttribute{
 				Description: "URL for bookmark, embed, and image blocks.",
 				Optional:    true,
 				Computed:    true,
+				Default:     stringdefault.StaticString(""),
 			},
 			"expression": schema.StringAttribute{
 				Description: "LaTeX expression for equation blocks.",
 				Optional:    true,
 				Computed:    true,
+				Default:     stringdefault.StaticString(""),
 			},
 			"synced_from": schema.StringAttribute{
 				Description: "Source block ID for synced block copies.",
