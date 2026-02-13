@@ -285,7 +285,8 @@ func (r *DatabaseEntryResource) Delete(ctx context.Context, req resource.DeleteR
 	}
 
 	_, err := r.client.Page.Update(ctx, notionapi.PageID(state.ID.ValueString()), &notionapi.PageUpdateRequest{
-		Archived: true,
+		Archived:   true,
+		Properties: notionapi.Properties{},
 	})
 	if err != nil {
 		resp.Diagnostics.AddError("Error archiving database entry", err.Error())
