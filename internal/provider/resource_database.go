@@ -7,6 +7,8 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/path"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema"
+	"github.com/hashicorp/terraform-plugin-framework/resource/schema/booldefault"
+	"github.com/hashicorp/terraform-plugin-framework/resource/schema/boolplanmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/planmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/stringplanmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/types"
@@ -29,6 +31,9 @@ type DatabaseResourceModel struct {
 	TitleColumnTitle types.String `tfsdk:"title_column_title"`
 	TitleColumnID    types.String `tfsdk:"title_column_id"`
 	URL              types.String `tfsdk:"url"`
+	IsInline         types.Bool   `tfsdk:"is_inline"`
+	Description      types.String `tfsdk:"description"`
+	Icon             types.String `tfsdk:"icon"`
 }
 
 func NewDatabaseResource() resource.Resource {
@@ -79,6 +84,29 @@ func (r *DatabaseResource) Schema(_ context.Context, _ resource.SchemaRequest, r
 					stringplanmodifier.UseStateForUnknown(),
 				},
 			},
+			"is_inline": schema.BoolAttribute{
+				Description: "Whether the database appears inline on the parent page. If false, it appears as a child page.",
+				Optional:    true,
+				Computed:    true,
+				Default:     booldefault.StaticBool(false),
+				PlanModifiers: []planmodifier.Bool{
+					boolplanmodifier.RequiresReplace(),
+				},
+			},
+			"description": schema.StringAttribute{
+				Description: "The description of the database (read-only, set in Notion UI).",
+				Computed:    true,
+				PlanModifiers: []planmodifier.String{
+					stringplanmodifier.UseStateForUnknown(),
+				},
+			},
+			"icon": schema.StringAttribute{
+				Description: "Emoji icon of the database (read-only, set in Notion UI).",
+				Computed:    true,
+				PlanModifiers: []planmodifier.String{
+					stringplanmodifier.UseStateForUnknown(),
+				},
+			},
 		},
 	}
 }
@@ -115,6 +143,7 @@ func (r *DatabaseResource) Create(ctx context.Context, req resource.CreateReques
 				Title: struct{}{},
 			},
 		},
+		IsInline: plan.IsInline.ValueBool(),
 	}
 
 	db, err := r.client.Database.Create(ctx, params)
@@ -125,6 +154,13 @@ func (r *DatabaseResource) Create(ctx context.Context, req resource.CreateReques
 
 	plan.ID = types.StringValue(normalizeID(string(db.ID)))
 	plan.URL = types.StringValue(db.URL)
+	plan.IsInline = types.BoolValue(db.IsInline)
+	plan.Description = types.StringValue(richTextToPlain(db.Description))
+	if db.Icon != nil && db.Icon.Emoji != nil {
+		plan.Icon = types.StringValue(string(*db.Icon.Emoji))
+	} else {
+		plan.Icon = types.StringValue("")
+	}
 
 	for name, prop := range db.Properties {
 		if name == plan.TitleColumnTitle.ValueString() {
@@ -157,6 +193,13 @@ func (r *DatabaseResource) Read(ctx context.Context, req resource.ReadRequest, r
 	state.ID = types.StringValue(normalizeID(string(db.ID)))
 	state.Title = types.StringValue(richTextToPlain(db.Title))
 	state.URL = types.StringValue(db.URL)
+	state.IsInline = types.BoolValue(db.IsInline)
+	state.Description = types.StringValue(richTextToPlain(db.Description))
+	if db.Icon != nil && db.Icon.Emoji != nil {
+		state.Icon = types.StringValue(string(*db.Icon.Emoji))
+	} else {
+		state.Icon = types.StringValue("")
+	}
 
 	if db.Parent.Type == notionapi.ParentTypePageID {
 		state.Parent = types.StringValue(normalizeID(string(db.Parent.PageID)))
@@ -212,6 +255,13 @@ func (r *DatabaseResource) Update(ctx context.Context, req resource.UpdateReques
 	}
 
 	plan.URL = types.StringValue(db.URL)
+	plan.IsInline = types.BoolValue(db.IsInline)
+	plan.Description = types.StringValue(richTextToPlain(db.Description))
+	if db.Icon != nil && db.Icon.Emoji != nil {
+		plan.Icon = types.StringValue(string(*db.Icon.Emoji))
+	} else {
+		plan.Icon = types.StringValue("")
+	}
 
 	for name, prop := range db.Properties {
 		if prop.GetType() == notionapi.PropertyConfigTypeTitle {

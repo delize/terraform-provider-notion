@@ -8,6 +8,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/resource"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/planmodifier"
+	"github.com/hashicorp/terraform-plugin-framework/resource/schema/stringdefault"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/stringplanmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/types"
 	"github.com/jomei/notionapi"
@@ -27,6 +28,7 @@ type PageResourceModel struct {
 	ParentPageID types.String `tfsdk:"parent_page_id"`
 	Title        types.String `tfsdk:"title"`
 	URL          types.String `tfsdk:"url"`
+	Icon         types.String `tfsdk:"icon"`
 }
 
 func NewPageResource() resource.Resource {
@@ -66,6 +68,12 @@ func (r *PageResource) Schema(_ context.Context, _ resource.SchemaRequest, resp 
 					stringplanmodifier.UseStateForUnknown(),
 				},
 			},
+			"icon": schema.StringAttribute{
+				Description: "Emoji icon for the page.",
+				Optional:    true,
+				Computed:    true,
+				Default:     stringdefault.StaticString(""),
+			},
 		},
 	}
 }
@@ -103,6 +111,14 @@ func (r *PageResource) Create(ctx context.Context, req resource.CreateRequest, r
 		},
 	}
 
+	if plan.Icon.ValueString() != "" {
+		emoji := notionapi.Emoji(plan.Icon.ValueString())
+		params.Icon = &notionapi.Icon{
+			Type:  "emoji",
+			Emoji: &emoji,
+		}
+	}
+
 	page, err := r.client.Page.Create(ctx, params)
 	if err != nil {
 		resp.Diagnostics.AddError("Error creating page", err.Error())
@@ -111,6 +127,11 @@ func (r *PageResource) Create(ctx context.Context, req resource.CreateRequest, r
 
 	plan.ID = types.StringValue(normalizeID(string(page.ID)))
 	plan.URL = types.StringValue(page.URL)
+	if page.Icon != nil && page.Icon.Emoji != nil {
+		plan.Icon = types.StringValue(string(*page.Icon.Emoji))
+	} else {
+		plan.Icon = types.StringValue("")
+	}
 
 	resp.Diagnostics.Append(resp.State.Set(ctx, &plan)...)
 }
@@ -146,6 +167,12 @@ func (r *PageResource) Read(ctx context.Context, req resource.ReadRequest, resp 
 		}
 	}
 
+	if page.Icon != nil && page.Icon.Emoji != nil {
+		state.Icon = types.StringValue(string(*page.Icon.Emoji))
+	} else {
+		state.Icon = types.StringValue("")
+	}
+
 	resp.Diagnostics.Append(resp.State.Set(ctx, &state)...)
 }
 
@@ -165,6 +192,14 @@ func (r *PageResource) Update(ctx context.Context, req resource.UpdateRequest, r
 		},
 	}
 
+	if plan.Icon.ValueString() != "" {
+		emoji := notionapi.Emoji(plan.Icon.ValueString())
+		params.Icon = &notionapi.Icon{
+			Type:  "emoji",
+			Emoji: &emoji,
+		}
+	}
+
 	page, err := r.client.Page.Update(ctx, notionapi.PageID(plan.ID.ValueString()), params)
 	if err != nil {
 		resp.Diagnostics.AddError("Error updating page", err.Error())
@@ -172,6 +207,11 @@ func (r *PageResource) Update(ctx context.Context, req resource.UpdateRequest, r
 	}
 
 	plan.URL = types.StringValue(page.URL)
+	if page.Icon != nil && page.Icon.Emoji != nil {
+		plan.Icon = types.StringValue(string(*page.Icon.Emoji))
+	} else {
+		plan.Icon = types.StringValue("")
+	}
 	resp.Diagnostics.Append(resp.State.Set(ctx, &plan)...)
 }
 
