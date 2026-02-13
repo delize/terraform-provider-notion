@@ -64,6 +64,38 @@ resource "notion_block" "note" {
 }
 ```
 
+### Markdown Links
+
+The `rich_text` attribute supports markdown link syntax. Links render as clickable hyperlinks in Notion.
+
+```terraform
+resource "notion_block" "with_link" {
+  parent_id = notion_page.my_page.id
+  type      = "paragraph"
+  rich_text = "See the [Notion API docs](https://developers.notion.com) for details."
+}
+```
+
+### JSON Rich Text (Advanced)
+
+For full control over text formatting (bold, italic, color, links), use `rich_text_json` instead of `rich_text`. It accepts a JSON-encoded array of Notion rich text objects and takes precedence over `rich_text` when set.
+
+```terraform
+resource "notion_block" "fancy" {
+  parent_id = notion_page.my_page.id
+  type      = "paragraph"
+  rich_text_json = jsonencode([
+    { type = "text", text = { content = "Click " } },
+    {
+      type = "text",
+      text = { content = "here", link = { url = "https://example.com" } },
+      annotations = { bold = true }
+    },
+    { type = "text", text = { content = " for details." } }
+  ])
+}
+```
+
 ### Columns
 
 ```terraform
@@ -94,7 +126,7 @@ resource "notion_block" "col1_text" {
 ### Optional
 
 - `after` (String) Insert after this block ID. Changing this forces a new resource.
-- `rich_text` (String) Plain text content of the block.
+- `rich_text` (String) Text content of the block. Supports markdown links: `[text](url)`.
 - `color` (String) Block color (e.g. `default`, `red`, `blue_background`).
 - `is_toggleable` (Boolean) Whether a heading block is toggleable.
 - `checked` (Boolean) Whether a to-do block is checked.
@@ -103,6 +135,7 @@ resource "notion_block" "col1_text" {
 - `caption` (String) Caption text for code, bookmark, and image blocks.
 - `url` (String) URL for bookmark, embed, and image blocks.
 - `expression` (String) LaTeX expression for equation blocks.
+- `rich_text_json` (String) JSON-encoded array of Notion rich text objects. When set, takes precedence over `rich_text`. See [Notion Rich Text API](https://developers.notion.com/reference/rich-text) for the object format.
 - `synced_from` (String) Source block ID for synced block copies. Changing this forces a new resource.
 
 ### Read-Only

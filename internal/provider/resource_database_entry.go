@@ -2,7 +2,6 @@ package provider
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"time"
 
@@ -14,7 +13,6 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/planmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/stringplanmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/types"
-	"github.com/hashicorp/terraform-plugin-log/tflog"
 	"github.com/jomei/notionapi"
 )
 
@@ -291,19 +289,8 @@ func (r *DatabaseEntryResource) Delete(ctx context.Context, req resource.DeleteR
 		Properties: notionapi.Properties{},
 	}
 
-	debugBody, _ := json.Marshal(archiveReq)
-	tflog.Debug(ctx, "Delete: archive request body", map[string]interface{}{
-		"page_id":        state.ID.ValueString(),
-		"request_body":   string(debugBody),
-		"properties_nil": archiveReq.Properties == nil,
-	})
-
 	_, err := r.client.Page.Update(ctx, notionapi.PageID(state.ID.ValueString()), archiveReq)
 	if err != nil {
-		tflog.Error(ctx, "Delete: archive failed", map[string]interface{}{
-			"error":        err.Error(),
-			"request_body": string(debugBody),
-		})
 		resp.Diagnostics.AddError("Error archiving database entry", err.Error())
 		return
 	}

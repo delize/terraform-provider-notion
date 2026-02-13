@@ -12,16 +12,29 @@ func emojiPtr(s string) *notionapi.Emoji {
 	return &e
 }
 
+// resolveRichText returns RichText from rich_text_json if set, otherwise from rich_text with markdown link parsing.
+func resolveRichText(plan BlockResourceModel) ([]notionapi.RichText, error) {
+	if !plan.RichTextJSON.IsNull() && !plan.RichTextJSON.IsUnknown() {
+		return jsonToRichText(plan.RichTextJSON.ValueString())
+	}
+	return plainToRichText(plan.RichText.ValueString()), nil
+}
+
 // buildBlockForCreate constructs a concrete SDK block from the flat schema model.
 func buildBlockForCreate(plan BlockResourceModel) (notionapi.Block, error) {
 	blockType := plan.Type.ValueString()
+
+	rt, err := resolveRichText(plan)
+	if err != nil {
+		return nil, err
+	}
 
 	switch blockType {
 	case "paragraph":
 		return &notionapi.ParagraphBlock{
 			BasicBlock: notionapi.BasicBlock{Object: notionapi.ObjectTypeBlock, Type: notionapi.BlockTypeParagraph},
 			Paragraph: notionapi.Paragraph{
-				RichText: plainToRichText(plan.RichText.ValueString()),
+				RichText: rt,
 				Color:    plan.Color.ValueString(),
 			},
 		}, nil
@@ -30,7 +43,7 @@ func buildBlockForCreate(plan BlockResourceModel) (notionapi.Block, error) {
 		return &notionapi.Heading1Block{
 			BasicBlock: notionapi.BasicBlock{Object: notionapi.ObjectTypeBlock, Type: notionapi.BlockTypeHeading1},
 			Heading1: notionapi.Heading{
-				RichText:     plainToRichText(plan.RichText.ValueString()),
+				RichText:     rt,
 				Color:        plan.Color.ValueString(),
 				IsToggleable: plan.IsToggleable.ValueBool(),
 			},
@@ -40,7 +53,7 @@ func buildBlockForCreate(plan BlockResourceModel) (notionapi.Block, error) {
 		return &notionapi.Heading2Block{
 			BasicBlock: notionapi.BasicBlock{Object: notionapi.ObjectTypeBlock, Type: notionapi.BlockTypeHeading2},
 			Heading2: notionapi.Heading{
-				RichText:     plainToRichText(plan.RichText.ValueString()),
+				RichText:     rt,
 				Color:        plan.Color.ValueString(),
 				IsToggleable: plan.IsToggleable.ValueBool(),
 			},
@@ -50,7 +63,7 @@ func buildBlockForCreate(plan BlockResourceModel) (notionapi.Block, error) {
 		return &notionapi.Heading3Block{
 			BasicBlock: notionapi.BasicBlock{Object: notionapi.ObjectTypeBlock, Type: notionapi.BlockTypeHeading3},
 			Heading3: notionapi.Heading{
-				RichText:     plainToRichText(plan.RichText.ValueString()),
+				RichText:     rt,
 				Color:        plan.Color.ValueString(),
 				IsToggleable: plan.IsToggleable.ValueBool(),
 			},
@@ -60,7 +73,7 @@ func buildBlockForCreate(plan BlockResourceModel) (notionapi.Block, error) {
 		return &notionapi.BulletedListItemBlock{
 			BasicBlock: notionapi.BasicBlock{Object: notionapi.ObjectTypeBlock, Type: notionapi.BlockTypeBulletedListItem},
 			BulletedListItem: notionapi.ListItem{
-				RichText: plainToRichText(plan.RichText.ValueString()),
+				RichText: rt,
 				Color:    plan.Color.ValueString(),
 			},
 		}, nil
@@ -69,7 +82,7 @@ func buildBlockForCreate(plan BlockResourceModel) (notionapi.Block, error) {
 		return &notionapi.NumberedListItemBlock{
 			BasicBlock: notionapi.BasicBlock{Object: notionapi.ObjectTypeBlock, Type: notionapi.BlockTypeNumberedListItem},
 			NumberedListItem: notionapi.ListItem{
-				RichText: plainToRichText(plan.RichText.ValueString()),
+				RichText: rt,
 				Color:    plan.Color.ValueString(),
 			},
 		}, nil
@@ -78,7 +91,7 @@ func buildBlockForCreate(plan BlockResourceModel) (notionapi.Block, error) {
 		return &notionapi.ToDoBlock{
 			BasicBlock: notionapi.BasicBlock{Object: notionapi.ObjectTypeBlock, Type: notionapi.BlockTypeToDo},
 			ToDo: notionapi.ToDo{
-				RichText: plainToRichText(plan.RichText.ValueString()),
+				RichText: rt,
 				Checked:  plan.Checked.ValueBool(),
 				Color:    plan.Color.ValueString(),
 			},
@@ -88,7 +101,7 @@ func buildBlockForCreate(plan BlockResourceModel) (notionapi.Block, error) {
 		return &notionapi.ToggleBlock{
 			BasicBlock: notionapi.BasicBlock{Object: notionapi.ObjectTypeBlock, Type: notionapi.BlockTypeToggle},
 			Toggle: notionapi.Toggle{
-				RichText: plainToRichText(plan.RichText.ValueString()),
+				RichText: rt,
 				Color:    plan.Color.ValueString(),
 			},
 		}, nil
@@ -97,7 +110,7 @@ func buildBlockForCreate(plan BlockResourceModel) (notionapi.Block, error) {
 		return &notionapi.QuoteBlock{
 			BasicBlock: notionapi.BasicBlock{Object: notionapi.ObjectTypeBlock, Type: notionapi.BlockQuote},
 			Quote: notionapi.Quote{
-				RichText: plainToRichText(plan.RichText.ValueString()),
+				RichText: rt,
 				Color:    plan.Color.ValueString(),
 			},
 		}, nil
@@ -106,7 +119,7 @@ func buildBlockForCreate(plan BlockResourceModel) (notionapi.Block, error) {
 		block := &notionapi.CalloutBlock{
 			BasicBlock: notionapi.BasicBlock{Object: notionapi.ObjectTypeBlock, Type: notionapi.BlockCallout},
 			Callout: notionapi.Callout{
-				RichText: plainToRichText(plan.RichText.ValueString()),
+				RichText: rt,
 				Color:    plan.Color.ValueString(),
 			},
 		}
@@ -122,7 +135,7 @@ func buildBlockForCreate(plan BlockResourceModel) (notionapi.Block, error) {
 		block := &notionapi.CodeBlock{
 			BasicBlock: notionapi.BasicBlock{Object: notionapi.ObjectTypeBlock, Type: notionapi.BlockTypeCode},
 			Code: notionapi.Code{
-				RichText: plainToRichText(plan.RichText.ValueString()),
+				RichText: rt,
 				Language: plan.Language.ValueString(),
 			},
 		}
@@ -219,11 +232,16 @@ func buildBlockForCreate(plan BlockResourceModel) (notionapi.Block, error) {
 func buildBlockUpdateRequest(plan BlockResourceModel) (*notionapi.BlockUpdateRequest, error) {
 	blockType := plan.Type.ValueString()
 
+	rt, err := resolveRichText(plan)
+	if err != nil {
+		return nil, err
+	}
+
 	switch blockType {
 	case "paragraph":
 		return &notionapi.BlockUpdateRequest{
 			Paragraph: &notionapi.Paragraph{
-				RichText: plainToRichText(plan.RichText.ValueString()),
+				RichText: rt,
 				Color:    plan.Color.ValueString(),
 			},
 		}, nil
@@ -231,7 +249,7 @@ func buildBlockUpdateRequest(plan BlockResourceModel) (*notionapi.BlockUpdateReq
 	case "heading_1":
 		return &notionapi.BlockUpdateRequest{
 			Heading1: &notionapi.Heading{
-				RichText:     plainToRichText(plan.RichText.ValueString()),
+				RichText:     rt,
 				Color:        plan.Color.ValueString(),
 				IsToggleable: plan.IsToggleable.ValueBool(),
 			},
@@ -240,7 +258,7 @@ func buildBlockUpdateRequest(plan BlockResourceModel) (*notionapi.BlockUpdateReq
 	case "heading_2":
 		return &notionapi.BlockUpdateRequest{
 			Heading2: &notionapi.Heading{
-				RichText:     plainToRichText(plan.RichText.ValueString()),
+				RichText:     rt,
 				Color:        plan.Color.ValueString(),
 				IsToggleable: plan.IsToggleable.ValueBool(),
 			},
@@ -249,7 +267,7 @@ func buildBlockUpdateRequest(plan BlockResourceModel) (*notionapi.BlockUpdateReq
 	case "heading_3":
 		return &notionapi.BlockUpdateRequest{
 			Heading3: &notionapi.Heading{
-				RichText:     plainToRichText(plan.RichText.ValueString()),
+				RichText:     rt,
 				Color:        plan.Color.ValueString(),
 				IsToggleable: plan.IsToggleable.ValueBool(),
 			},
@@ -258,7 +276,7 @@ func buildBlockUpdateRequest(plan BlockResourceModel) (*notionapi.BlockUpdateReq
 	case "bulleted_list_item":
 		return &notionapi.BlockUpdateRequest{
 			BulletedListItem: &notionapi.ListItem{
-				RichText: plainToRichText(plan.RichText.ValueString()),
+				RichText: rt,
 				Color:    plan.Color.ValueString(),
 			},
 		}, nil
@@ -266,7 +284,7 @@ func buildBlockUpdateRequest(plan BlockResourceModel) (*notionapi.BlockUpdateReq
 	case "numbered_list_item":
 		return &notionapi.BlockUpdateRequest{
 			NumberedListItem: &notionapi.ListItem{
-				RichText: plainToRichText(plan.RichText.ValueString()),
+				RichText: rt,
 				Color:    plan.Color.ValueString(),
 			},
 		}, nil
@@ -274,7 +292,7 @@ func buildBlockUpdateRequest(plan BlockResourceModel) (*notionapi.BlockUpdateReq
 	case "to_do":
 		return &notionapi.BlockUpdateRequest{
 			ToDo: &notionapi.ToDo{
-				RichText: plainToRichText(plan.RichText.ValueString()),
+				RichText: rt,
 				Checked:  plan.Checked.ValueBool(),
 				Color:    plan.Color.ValueString(),
 			},
@@ -283,7 +301,7 @@ func buildBlockUpdateRequest(plan BlockResourceModel) (*notionapi.BlockUpdateReq
 	case "toggle":
 		return &notionapi.BlockUpdateRequest{
 			Toggle: &notionapi.Toggle{
-				RichText: plainToRichText(plan.RichText.ValueString()),
+				RichText: rt,
 				Color:    plan.Color.ValueString(),
 			},
 		}, nil
@@ -291,14 +309,14 @@ func buildBlockUpdateRequest(plan BlockResourceModel) (*notionapi.BlockUpdateReq
 	case "quote":
 		return &notionapi.BlockUpdateRequest{
 			Quote: &notionapi.Quote{
-				RichText: plainToRichText(plan.RichText.ValueString()),
+				RichText: rt,
 				Color:    plan.Color.ValueString(),
 			},
 		}, nil
 
 	case "callout":
 		callout := &notionapi.Callout{
-			RichText: plainToRichText(plan.RichText.ValueString()),
+			RichText: rt,
 			Color:    plan.Color.ValueString(),
 		}
 		if !plan.Icon.IsNull() && !plan.Icon.IsUnknown() && plan.Icon.ValueString() != "" {
@@ -311,7 +329,7 @@ func buildBlockUpdateRequest(plan BlockResourceModel) (*notionapi.BlockUpdateReq
 
 	case "code":
 		code := &notionapi.Code{
-			RichText: plainToRichText(plan.RichText.ValueString()),
+			RichText: rt,
 			Language: plan.Language.ValueString(),
 		}
 		if !plan.Caption.IsNull() && !plan.Caption.IsUnknown() {
@@ -360,6 +378,18 @@ func buildBlockUpdateRequest(plan BlockResourceModel) (*notionapi.BlockUpdateReq
 	}
 }
 
+// setRichTextState sets both RichText and RichTextJSON on the state.
+// If the user originally used rich_text_json (non-null in state), serialize to JSON.
+// Otherwise, use richTextToPlain for the markdown-aware round-trip.
+func setRichTextState(rt []notionapi.RichText, state *BlockResourceModel) {
+	state.RichText = types.StringValue(richTextToPlain(rt))
+	if !state.RichTextJSON.IsNull() {
+		if j, err := richTextToJSON(rt); err == nil {
+			state.RichTextJSON = types.StringValue(j)
+		}
+	}
+}
+
 // readBlockIntoState extracts fields from a concrete SDK block into the flat schema model.
 func readBlockIntoState(block notionapi.Block, state *BlockResourceModel) {
 	state.ID = types.StringValue(normalizeID(string(block.GetID())))
@@ -380,54 +410,54 @@ func readBlockIntoState(block notionapi.Block, state *BlockResourceModel) {
 
 	switch b := block.(type) {
 	case *notionapi.ParagraphBlock:
-		state.RichText = types.StringValue(richTextToPlain(b.Paragraph.RichText))
+		setRichTextState(b.Paragraph.RichText, state)
 		state.Color = types.StringValue(b.Paragraph.Color)
 
 	case *notionapi.Heading1Block:
-		state.RichText = types.StringValue(richTextToPlain(b.Heading1.RichText))
+		setRichTextState(b.Heading1.RichText, state)
 		state.Color = types.StringValue(b.Heading1.Color)
 		state.IsToggleable = types.BoolValue(b.Heading1.IsToggleable)
 
 	case *notionapi.Heading2Block:
-		state.RichText = types.StringValue(richTextToPlain(b.Heading2.RichText))
+		setRichTextState(b.Heading2.RichText, state)
 		state.Color = types.StringValue(b.Heading2.Color)
 		state.IsToggleable = types.BoolValue(b.Heading2.IsToggleable)
 
 	case *notionapi.Heading3Block:
-		state.RichText = types.StringValue(richTextToPlain(b.Heading3.RichText))
+		setRichTextState(b.Heading3.RichText, state)
 		state.Color = types.StringValue(b.Heading3.Color)
 		state.IsToggleable = types.BoolValue(b.Heading3.IsToggleable)
 
 	case *notionapi.BulletedListItemBlock:
-		state.RichText = types.StringValue(richTextToPlain(b.BulletedListItem.RichText))
+		setRichTextState(b.BulletedListItem.RichText, state)
 		state.Color = types.StringValue(b.BulletedListItem.Color)
 
 	case *notionapi.NumberedListItemBlock:
-		state.RichText = types.StringValue(richTextToPlain(b.NumberedListItem.RichText))
+		setRichTextState(b.NumberedListItem.RichText, state)
 		state.Color = types.StringValue(b.NumberedListItem.Color)
 
 	case *notionapi.ToDoBlock:
-		state.RichText = types.StringValue(richTextToPlain(b.ToDo.RichText))
+		setRichTextState(b.ToDo.RichText, state)
 		state.Checked = types.BoolValue(b.ToDo.Checked)
 		state.Color = types.StringValue(b.ToDo.Color)
 
 	case *notionapi.ToggleBlock:
-		state.RichText = types.StringValue(richTextToPlain(b.Toggle.RichText))
+		setRichTextState(b.Toggle.RichText, state)
 		state.Color = types.StringValue(b.Toggle.Color)
 
 	case *notionapi.QuoteBlock:
-		state.RichText = types.StringValue(richTextToPlain(b.Quote.RichText))
+		setRichTextState(b.Quote.RichText, state)
 		state.Color = types.StringValue(b.Quote.Color)
 
 	case *notionapi.CalloutBlock:
-		state.RichText = types.StringValue(richTextToPlain(b.Callout.RichText))
+		setRichTextState(b.Callout.RichText, state)
 		state.Color = types.StringValue(b.Callout.Color)
 		if b.Callout.Icon != nil && b.Callout.Icon.Emoji != nil {
 			state.Icon = types.StringValue(string(*b.Callout.Icon.Emoji))
 		}
 
 	case *notionapi.CodeBlock:
-		state.RichText = types.StringValue(richTextToPlain(b.Code.RichText))
+		setRichTextState(b.Code.RichText, state)
 		state.Language = types.StringValue(b.Code.Language)
 		state.Caption = types.StringValue(richTextToPlain(b.Code.Caption))
 

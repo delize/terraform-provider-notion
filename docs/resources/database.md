@@ -27,7 +27,7 @@ resource "notion_database" "tasks" {
 
 - `parent` (String) The ID of the parent page. Changing this forces a new resource.
 - `title` (String) The title of the database.
-- `title_column_title` (String) The name of the title column (every Notion database has one).
+- `title_column_title` (String) The name of the title column (every Notion database has one). Can be renamed on existing databases.
 
 ### Read-Only
 

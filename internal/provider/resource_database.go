@@ -36,6 +36,23 @@ type DatabaseResourceModel struct {
 	Icon             types.String `tfsdk:"icon"`
 }
 
+// titlePropertyConfigWithName wraps the Notion title property config with a
+// "name" field for renaming. The SDK's TitlePropertyConfig lacks this field.
+type titlePropertyConfigWithName struct {
+	ID    notionapi.PropertyID         `json:"id,omitempty"`
+	Type  notionapi.PropertyConfigType `json:"type"`
+	Title struct{}                     `json:"title"`
+	Name  string                       `json:"name"`
+}
+
+func (p titlePropertyConfigWithName) GetType() notionapi.PropertyConfigType {
+	return p.Type
+}
+
+func (p titlePropertyConfigWithName) GetID() notionapi.PropertyID {
+	return p.ID
+}
+
 func NewDatabaseResource() resource.Resource {
 	return &DatabaseResource{}
 }
@@ -229,21 +246,16 @@ func (r *DatabaseResource) Update(ctx context.Context, req resource.UpdateReques
 		Title: plainToRichText(plan.Title.ValueString()),
 	}
 
-	// If the title column name changed, we need to send the rename via raw API.
-	// The jomei SDK doesn't support the "name" field on property configs, so we
-	// create a new property with the new name and the same type.
-	// However, the Notion API supports renaming by sending the old key with a
-	// "name" field. Since the SDK doesn't expose this, we'll handle it by
-	// sending the property config JSON directly via a custom approach.
-	// For simplicity, we accept title_column_title changes only via
-	// the database update with a new properties map.
+	// If the title column name changed, rename it via the Notion API.
+	// We send the current (state) name as the key with a "name" field set to
+	// the desired (plan) name. The SDK's TitlePropertyConfig doesn't support
+	// the "name" field, so we use titlePropertyConfigWithName.
 	if plan.TitleColumnTitle.ValueString() != state.TitleColumnTitle.ValueString() {
-		// The Notion API accepts `name` field to rename, but the SDK doesn't support it.
-		// We work around this by using the property ID approach.
 		params.Properties = notionapi.PropertyConfigs{
-			state.TitleColumnTitle.ValueString(): notionapi.TitlePropertyConfig{
+			state.TitleColumnTitle.ValueString(): titlePropertyConfigWithName{
 				Type:  notionapi.PropertyConfigTypeTitle,
 				Title: struct{}{},
+				Name:  plan.TitleColumnTitle.ValueString(),
 			},
 		}
 	}

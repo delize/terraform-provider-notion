@@ -33,6 +33,7 @@ type BlockResourceModel struct {
 	After        types.String `tfsdk:"after"`
 	HasChildren  types.Bool   `tfsdk:"has_children"`
 	RichText     types.String `tfsdk:"rich_text"`
+	RichTextJSON types.String `tfsdk:"rich_text_json"`
 	Color        types.String `tfsdk:"color"`
 	IsToggleable types.Bool   `tfsdk:"is_toggleable"`
 	Checked      types.Bool   `tfsdk:"checked"`
@@ -95,10 +96,14 @@ func (r *BlockResource) Schema(_ context.Context, _ resource.SchemaRequest, resp
 				},
 			},
 			"rich_text": schema.StringAttribute{
-				Description: "Plain text content of the block.",
+				Description: "Text content of the block. Supports markdown links: [text](url).",
 				Optional:    true,
 				Computed:    true,
 				Default:     stringdefault.StaticString(""),
+			},
+			"rich_text_json": schema.StringAttribute{
+				Description: "JSON-encoded array of Notion rich text objects. When set, takes precedence over rich_text.",
+				Optional:    true,
 			},
 			"color": schema.StringAttribute{
 				Description: "Block color (e.g. default, red, blue_background).",

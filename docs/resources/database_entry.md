@@ -22,6 +22,21 @@ resource "notion_database_entry" "first_task" {
 }
 ```
 
+### With Markdown Links
+
+The `title` and `rich_text_properties` values support markdown link syntax. Links render as clickable hyperlinks in Notion.
+
+```terraform
+resource "notion_database_entry" "linked" {
+  database = notion_database.references.id
+  title    = "ISO-3166"
+
+  rich_text_properties = {
+    "Description" = "Country codes based on the [ISO-3166](https://en.wikipedia.org/wiki/ISO_3166-1) standard."
+  }
+}
+```
+
 ### With Property Values
 
 ```terraform
@@ -72,11 +87,11 @@ resource "notion_database_entry" "office" {
 ### Required
 
 - `database` (String) The ID of the parent database. Changing this forces a new resource.
-- `title` (String) The title of the entry (value of the title column).
+- `title` (String) The title of the entry (value of the title column). Supports markdown links: `[text](url)`.
 
 ### Optional
 
-- `rich_text_properties` (Map of String) Map of rich text property name to string value.
+- `rich_text_properties` (Map of String) Map of rich text property name to string value. Values support markdown links: `[text](url)`.
 - `number_properties` (Map of Number) Map of number property name to numeric value.
 - `checkbox_properties` (Map of Boolean) Map of checkbox property name to boolean value.
 - `select_properties` (Map of String) Map of select property name to option name.
