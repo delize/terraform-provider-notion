@@ -3,7 +3,10 @@ package provider
 import (
 	"context"
 	"fmt"
+	"time"
 
+	"github.com/hashicorp/terraform-plugin-framework/attr"
+	"github.com/hashicorp/terraform-plugin-framework/diag"
 	"github.com/hashicorp/terraform-plugin-framework/path"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema"
@@ -23,10 +26,19 @@ type DatabaseEntryResource struct {
 }
 
 type DatabaseEntryResourceModel struct {
-	ID       types.String `tfsdk:"id"`
-	Database types.String `tfsdk:"database"`
-	Title    types.String `tfsdk:"title"`
-	URL      types.String `tfsdk:"url"`
+	ID                    types.String `tfsdk:"id"`
+	Database              types.String `tfsdk:"database"`
+	Title                 types.String `tfsdk:"title"`
+	URL                   types.String `tfsdk:"url"`
+	RichTextProperties    types.Map    `tfsdk:"rich_text_properties"`
+	NumberProperties      types.Map    `tfsdk:"number_properties"`
+	CheckboxProperties    types.Map    `tfsdk:"checkbox_properties"`
+	SelectProperties      types.Map    `tfsdk:"select_properties"`
+	StatusProperties      types.Map    `tfsdk:"status_properties"`
+	URLProperties         types.Map    `tfsdk:"url_properties"`
+	EmailProperties       types.Map    `tfsdk:"email_properties"`
+	PhoneNumberProperties types.Map    `tfsdk:"phone_number_properties"`
+	DateProperties        types.Map    `tfsdk:"date_properties"`
 }
 
 func NewDatabaseEntryResource() resource.Resource {
@@ -65,6 +77,51 @@ func (r *DatabaseEntryResource) Schema(_ context.Context, _ resource.SchemaReque
 				PlanModifiers: []planmodifier.String{
 					stringplanmodifier.UseStateForUnknown(),
 				},
+			},
+			"rich_text_properties": schema.MapAttribute{
+				Description: "Map of rich text property name to string value.",
+				Optional:    true,
+				ElementType: types.StringType,
+			},
+			"number_properties": schema.MapAttribute{
+				Description: "Map of number property name to numeric value.",
+				Optional:    true,
+				ElementType: types.Float64Type,
+			},
+			"checkbox_properties": schema.MapAttribute{
+				Description: "Map of checkbox property name to boolean value.",
+				Optional:    true,
+				ElementType: types.BoolType,
+			},
+			"select_properties": schema.MapAttribute{
+				Description: "Map of select property name to option name.",
+				Optional:    true,
+				ElementType: types.StringType,
+			},
+			"status_properties": schema.MapAttribute{
+				Description: "Map of status property name to status name.",
+				Optional:    true,
+				ElementType: types.StringType,
+			},
+			"url_properties": schema.MapAttribute{
+				Description: "Map of URL property name to URL value.",
+				Optional:    true,
+				ElementType: types.StringType,
+			},
+			"email_properties": schema.MapAttribute{
+				Description: "Map of email property name to email value.",
+				Optional:    true,
+				ElementType: types.StringType,
+			},
+			"phone_number_properties": schema.MapAttribute{
+				Description: "Map of phone number property name to phone number value.",
+				Optional:    true,
+				ElementType: types.StringType,
+			},
+			"date_properties": schema.MapAttribute{
+				Description: "Map of date property name to ISO 8601 date string.",
+				Optional:    true,
+				ElementType: types.StringType,
 			},
 		},
 	}
@@ -110,17 +167,21 @@ func (r *DatabaseEntryResource) Create(ctx context.Context, req resource.CreateR
 		return
 	}
 
+	properties := buildEntryProperties(ctx, &plan, &resp.Diagnostics)
+	if resp.Diagnostics.HasError() {
+		return
+	}
+	properties[titlePropName] = notionapi.TitleProperty{
+		Type:  notionapi.PropertyTypeTitle,
+		Title: plainToRichText(plan.Title.ValueString()),
+	}
+
 	params := &notionapi.PageCreateRequest{
 		Parent: notionapi.Parent{
 			Type:       notionapi.ParentTypeDatabaseID,
 			DatabaseID: notionapi.DatabaseID(plan.Database.ValueString()),
 		},
-		Properties: notionapi.Properties{
-			titlePropName: notionapi.TitleProperty{
-				Type:  notionapi.PropertyTypeTitle,
-				Title: plainToRichText(plan.Title.ValueString()),
-			},
-		},
+		Properties: properties,
 	}
 
 	page, err := r.client.Page.Create(ctx, params)
@@ -167,6 +228,8 @@ func (r *DatabaseEntryResource) Read(ctx context.Context, req resource.ReadReque
 		}
 	}
 
+	readEntryProperties(page, &state, &resp.Diagnostics)
+
 	resp.Diagnostics.Append(resp.State.Set(ctx, &state)...)
 }
 
@@ -177,19 +240,31 @@ func (r *DatabaseEntryResource) Update(ctx context.Context, req resource.UpdateR
 		return
 	}
 
+	var state DatabaseEntryResourceModel
+	resp.Diagnostics.Append(req.State.Get(ctx, &state)...)
+	if resp.Diagnostics.HasError() {
+		return
+	}
+
 	titlePropName, err := r.findTitlePropertyName(ctx, plan.Database.ValueString())
 	if err != nil {
 		resp.Diagnostics.AddError("Error reading database", err.Error())
 		return
 	}
 
+	properties := buildEntryProperties(ctx, &plan, &resp.Diagnostics)
+	if resp.Diagnostics.HasError() {
+		return
+	}
+	properties[titlePropName] = notionapi.TitleProperty{
+		Type:  notionapi.PropertyTypeTitle,
+		Title: plainToRichText(plan.Title.ValueString()),
+	}
+
+	clearRemovedProperties(&state, &plan, properties)
+
 	params := &notionapi.PageUpdateRequest{
-		Properties: notionapi.Properties{
-			titlePropName: notionapi.TitleProperty{
-				Type:  notionapi.PropertyTypeTitle,
-				Title: plainToRichText(plan.Title.ValueString()),
-			},
-		},
+		Properties: properties,
 	}
 
 	page, err := r.client.Page.Update(ctx, notionapi.PageID(plan.ID.ValueString()), params)
@@ -220,4 +295,340 @@ func (r *DatabaseEntryResource) Delete(ctx context.Context, req resource.DeleteR
 
 func (r *DatabaseEntryResource) ImportState(ctx context.Context, req resource.ImportStateRequest, resp *resource.ImportStateResponse) {
 	resource.ImportStatePassthroughID(ctx, path.Root("id"), req, resp)
+}
+
+// buildEntryProperties constructs notionapi.Properties from all typed map fields in the plan.
+func buildEntryProperties(ctx context.Context, plan *DatabaseEntryResourceModel, diags *diag.Diagnostics) notionapi.Properties {
+	props := make(notionapi.Properties)
+
+	if !plan.RichTextProperties.IsNull() && !plan.RichTextProperties.IsUnknown() {
+		var vals map[string]string
+		diags.Append(plan.RichTextProperties.ElementsAs(ctx, &vals, false)...)
+		for name, val := range vals {
+			props[name] = notionapi.RichTextProperty{
+				Type:     notionapi.PropertyTypeRichText,
+				RichText: plainToRichText(val),
+			}
+		}
+	}
+
+	if !plan.NumberProperties.IsNull() && !plan.NumberProperties.IsUnknown() {
+		var vals map[string]float64
+		diags.Append(plan.NumberProperties.ElementsAs(ctx, &vals, false)...)
+		for name, val := range vals {
+			props[name] = notionapi.NumberProperty{
+				Type:   notionapi.PropertyTypeNumber,
+				Number: val,
+			}
+		}
+	}
+
+	if !plan.CheckboxProperties.IsNull() && !plan.CheckboxProperties.IsUnknown() {
+		var vals map[string]bool
+		diags.Append(plan.CheckboxProperties.ElementsAs(ctx, &vals, false)...)
+		for name, val := range vals {
+			props[name] = notionapi.CheckboxProperty{
+				Type:     notionapi.PropertyTypeCheckbox,
+				Checkbox: val,
+			}
+		}
+	}
+
+	if !plan.SelectProperties.IsNull() && !plan.SelectProperties.IsUnknown() {
+		var vals map[string]string
+		diags.Append(plan.SelectProperties.ElementsAs(ctx, &vals, false)...)
+		for name, val := range vals {
+			props[name] = notionapi.SelectProperty{
+				Type:   notionapi.PropertyTypeSelect,
+				Select: notionapi.Option{Name: val},
+			}
+		}
+	}
+
+	if !plan.StatusProperties.IsNull() && !plan.StatusProperties.IsUnknown() {
+		var vals map[string]string
+		diags.Append(plan.StatusProperties.ElementsAs(ctx, &vals, false)...)
+		for name, val := range vals {
+			props[name] = notionapi.StatusProperty{
+				Type:   notionapi.PropertyTypeStatus,
+				Status: notionapi.Option{Name: val},
+			}
+		}
+	}
+
+	if !plan.URLProperties.IsNull() && !plan.URLProperties.IsUnknown() {
+		var vals map[string]string
+		diags.Append(plan.URLProperties.ElementsAs(ctx, &vals, false)...)
+		for name, val := range vals {
+			props[name] = notionapi.URLProperty{
+				Type: notionapi.PropertyTypeURL,
+				URL:  val,
+			}
+		}
+	}
+
+	if !plan.EmailProperties.IsNull() && !plan.EmailProperties.IsUnknown() {
+		var vals map[string]string
+		diags.Append(plan.EmailProperties.ElementsAs(ctx, &vals, false)...)
+		for name, val := range vals {
+			props[name] = notionapi.EmailProperty{
+				Type:  notionapi.PropertyTypeEmail,
+				Email: val,
+			}
+		}
+	}
+
+	if !plan.PhoneNumberProperties.IsNull() && !plan.PhoneNumberProperties.IsUnknown() {
+		var vals map[string]string
+		diags.Append(plan.PhoneNumberProperties.ElementsAs(ctx, &vals, false)...)
+		for name, val := range vals {
+			props[name] = notionapi.PhoneNumberProperty{
+				Type:        notionapi.PropertyTypePhoneNumber,
+				PhoneNumber: val,
+			}
+		}
+	}
+
+	if !plan.DateProperties.IsNull() && !plan.DateProperties.IsUnknown() {
+		var vals map[string]string
+		diags.Append(plan.DateProperties.ElementsAs(ctx, &vals, false)...)
+		for name, val := range vals {
+			t, err := time.Parse(time.RFC3339, val)
+			if err != nil {
+				t, err = time.Parse("2006-01-02", val)
+				if err != nil {
+					diags.AddError("Invalid date value",
+						fmt.Sprintf("Property %q: %q is not a valid ISO 8601 date or datetime.", name, val))
+					continue
+				}
+			}
+			d := notionapi.Date(t)
+			props[name] = notionapi.DateProperty{
+				Type: notionapi.PropertyTypeDate,
+				Date: &notionapi.DateObject{Start: &d},
+			}
+		}
+	}
+
+	return props
+}
+
+// readEntryProperties reads API response properties back into the matching state maps.
+// Only properties whose keys are already managed (present in the current state maps) are read.
+func readEntryProperties(page *notionapi.Page, state *DatabaseEntryResourceModel, diags *diag.Diagnostics) {
+	if !state.RichTextProperties.IsNull() {
+		vals := make(map[string]attr.Value)
+		for name := range state.RichTextProperties.Elements() {
+			if prop, ok := page.Properties[name]; ok {
+				if rtp, ok := prop.(*notionapi.RichTextProperty); ok {
+					vals[name] = types.StringValue(richTextToPlain(rtp.RichText))
+				}
+			}
+		}
+		m, d := types.MapValue(types.StringType, vals)
+		diags.Append(d...)
+		state.RichTextProperties = m
+	}
+
+	if !state.NumberProperties.IsNull() {
+		vals := make(map[string]attr.Value)
+		for name := range state.NumberProperties.Elements() {
+			if prop, ok := page.Properties[name]; ok {
+				if np, ok := prop.(*notionapi.NumberProperty); ok {
+					vals[name] = types.Float64Value(np.Number)
+				}
+			}
+		}
+		m, d := types.MapValue(types.Float64Type, vals)
+		diags.Append(d...)
+		state.NumberProperties = m
+	}
+
+	if !state.CheckboxProperties.IsNull() {
+		vals := make(map[string]attr.Value)
+		for name := range state.CheckboxProperties.Elements() {
+			if prop, ok := page.Properties[name]; ok {
+				if cp, ok := prop.(*notionapi.CheckboxProperty); ok {
+					vals[name] = types.BoolValue(cp.Checkbox)
+				}
+			}
+		}
+		m, d := types.MapValue(types.BoolType, vals)
+		diags.Append(d...)
+		state.CheckboxProperties = m
+	}
+
+	if !state.SelectProperties.IsNull() {
+		vals := make(map[string]attr.Value)
+		for name := range state.SelectProperties.Elements() {
+			if prop, ok := page.Properties[name]; ok {
+				if sp, ok := prop.(*notionapi.SelectProperty); ok {
+					vals[name] = types.StringValue(sp.Select.Name)
+				}
+			}
+		}
+		m, d := types.MapValue(types.StringType, vals)
+		diags.Append(d...)
+		state.SelectProperties = m
+	}
+
+	if !state.StatusProperties.IsNull() {
+		vals := make(map[string]attr.Value)
+		for name := range state.StatusProperties.Elements() {
+			if prop, ok := page.Properties[name]; ok {
+				if sp, ok := prop.(*notionapi.StatusProperty); ok {
+					vals[name] = types.StringValue(sp.Status.Name)
+				}
+			}
+		}
+		m, d := types.MapValue(types.StringType, vals)
+		diags.Append(d...)
+		state.StatusProperties = m
+	}
+
+	if !state.URLProperties.IsNull() {
+		vals := make(map[string]attr.Value)
+		for name := range state.URLProperties.Elements() {
+			if prop, ok := page.Properties[name]; ok {
+				if up, ok := prop.(*notionapi.URLProperty); ok {
+					vals[name] = types.StringValue(up.URL)
+				}
+			}
+		}
+		m, d := types.MapValue(types.StringType, vals)
+		diags.Append(d...)
+		state.URLProperties = m
+	}
+
+	if !state.EmailProperties.IsNull() {
+		vals := make(map[string]attr.Value)
+		for name := range state.EmailProperties.Elements() {
+			if prop, ok := page.Properties[name]; ok {
+				if ep, ok := prop.(*notionapi.EmailProperty); ok {
+					vals[name] = types.StringValue(ep.Email)
+				}
+			}
+		}
+		m, d := types.MapValue(types.StringType, vals)
+		diags.Append(d...)
+		state.EmailProperties = m
+	}
+
+	if !state.PhoneNumberProperties.IsNull() {
+		vals := make(map[string]attr.Value)
+		for name := range state.PhoneNumberProperties.Elements() {
+			if prop, ok := page.Properties[name]; ok {
+				if pp, ok := prop.(*notionapi.PhoneNumberProperty); ok {
+					vals[name] = types.StringValue(pp.PhoneNumber)
+				}
+			}
+		}
+		m, d := types.MapValue(types.StringType, vals)
+		diags.Append(d...)
+		state.PhoneNumberProperties = m
+	}
+
+	if !state.DateProperties.IsNull() {
+		vals := make(map[string]attr.Value)
+		for name := range state.DateProperties.Elements() {
+			if prop, ok := page.Properties[name]; ok {
+				if dp, ok := prop.(*notionapi.DateProperty); ok {
+					if dp.Date != nil && dp.Date.Start != nil {
+						vals[name] = types.StringValue(formatNotionDate(dp.Date.Start))
+					}
+				}
+			}
+		}
+		m, d := types.MapValue(types.StringType, vals)
+		diags.Append(d...)
+		state.DateProperties = m
+	}
+}
+
+// removedKeys returns keys present in stateMap but absent from planMap.
+func removedKeys(stateMap, planMap types.Map) []string {
+	if stateMap.IsNull() || stateMap.IsUnknown() {
+		return nil
+	}
+	stateElems := stateMap.Elements()
+	planElems := map[string]attr.Value{}
+	if !planMap.IsNull() && !planMap.IsUnknown() {
+		planElems = planMap.Elements()
+	}
+	var removed []string
+	for key := range stateElems {
+		if _, ok := planElems[key]; !ok {
+			removed = append(removed, key)
+		}
+	}
+	return removed
+}
+
+// clearRemovedProperties sends empty/default values for properties that were
+// in the prior state but are no longer in the plan, so they get cleared in Notion.
+func clearRemovedProperties(state, plan *DatabaseEntryResourceModel, props notionapi.Properties) {
+	for _, name := range removedKeys(state.RichTextProperties, plan.RichTextProperties) {
+		props[name] = notionapi.RichTextProperty{
+			Type:     notionapi.PropertyTypeRichText,
+			RichText: []notionapi.RichText{},
+		}
+	}
+	for _, name := range removedKeys(state.NumberProperties, plan.NumberProperties) {
+		props[name] = notionapi.NumberProperty{
+			Type:   notionapi.PropertyTypeNumber,
+			Number: 0,
+		}
+	}
+	for _, name := range removedKeys(state.CheckboxProperties, plan.CheckboxProperties) {
+		props[name] = notionapi.CheckboxProperty{
+			Type:     notionapi.PropertyTypeCheckbox,
+			Checkbox: false,
+		}
+	}
+	for _, name := range removedKeys(state.SelectProperties, plan.SelectProperties) {
+		props[name] = notionapi.SelectProperty{
+			Type:   notionapi.PropertyTypeSelect,
+			Select: notionapi.Option{},
+		}
+	}
+	for _, name := range removedKeys(state.StatusProperties, plan.StatusProperties) {
+		props[name] = notionapi.StatusProperty{
+			Type:   notionapi.PropertyTypeStatus,
+			Status: notionapi.Option{},
+		}
+	}
+	for _, name := range removedKeys(state.URLProperties, plan.URLProperties) {
+		props[name] = notionapi.URLProperty{
+			Type: notionapi.PropertyTypeURL,
+			URL:  "",
+		}
+	}
+	for _, name := range removedKeys(state.EmailProperties, plan.EmailProperties) {
+		props[name] = notionapi.EmailProperty{
+			Type:  notionapi.PropertyTypeEmail,
+			Email: "",
+		}
+	}
+	for _, name := range removedKeys(state.PhoneNumberProperties, plan.PhoneNumberProperties) {
+		props[name] = notionapi.PhoneNumberProperty{
+			Type:        notionapi.PropertyTypePhoneNumber,
+			PhoneNumber: "",
+		}
+	}
+	for _, name := range removedKeys(state.DateProperties, plan.DateProperties) {
+		props[name] = notionapi.DateProperty{
+			Type: notionapi.PropertyTypeDate,
+			Date: nil,
+		}
+	}
+}
+
+// formatNotionDate formats a Notion Date as date-only (2006-01-02) when the time
+// component is midnight UTC, otherwise as full RFC3339.
+func formatNotionDate(d *notionapi.Date) string {
+	t := time.Time(*d)
+	if t.Hour() == 0 && t.Minute() == 0 && t.Second() == 0 && t.Nanosecond() == 0 {
+		return t.Format("2006-01-02")
+	}
+	return t.Format(time.RFC3339)
 }
