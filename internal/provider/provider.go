@@ -103,6 +103,7 @@ func (p *NotionProvider) DataSources(_ context.Context) []func() datasource.Data
 	return []func() datasource.DataSource{
 		NewDatabaseDataSource,
 		NewPageDataSource,
+		NewPageMarkdownDataSource,
 		NewUserDataSource,
 		NewDatabaseEntriesDataSource,
 	}
