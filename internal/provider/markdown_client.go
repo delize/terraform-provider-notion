@@ -128,6 +128,30 @@ func (mc *markdownClient) CreatePageWithMarkdownAndTitle(ctx context.Context, pa
 	return page.ID, page.URL, nil
 }
 
+// CreateDatabaseEntryWithMarkdown creates a database entry with markdown content and properties.
+func (mc *markdownClient) CreateDatabaseEntryWithMarkdown(ctx context.Context, databaseID, markdown string, properties map[string]interface{}) (string, string, error) {
+	body := map[string]interface{}{
+		"parent":     map[string]string{"database_id": databaseID},
+		"markdown":   markdown,
+		"properties": properties,
+	}
+
+	respBody, err := mc.doRequest(ctx, http.MethodPost, "https://api.notion.com/v1/pages", body)
+	if err != nil {
+		return "", "", err
+	}
+
+	var page struct {
+		ID  string `json:"id"`
+		URL string `json:"url"`
+	}
+	if err := json.Unmarshal(respBody, &page); err != nil {
+		return "", "", fmt.Errorf("failed to parse page response: %w", err)
+	}
+
+	return page.ID, page.URL, nil
+}
+
 // GetPageMarkdown retrieves a page's content as markdown.
 func (mc *markdownClient) GetPageMarkdown(ctx context.Context, pageID string) (*PageMarkdownResponse, error) {
 	url := fmt.Sprintf("https://api.notion.com/v1/pages/%s/markdown", pageID)

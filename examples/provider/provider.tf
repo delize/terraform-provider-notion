@@ -81,6 +81,23 @@ resource "notion_database_entry" "first_task" {
   title    = "Set up Terraform"
 }
 
+# Add a database entry with markdown body content
+resource "notion_database_entry" "documented_task" {
+  database = notion_database.tasks.id
+  title    = "Write documentation"
+  markdown = <<-EOT
+    ## Description
+
+    Write comprehensive docs for the new feature.
+
+    ## Acceptance Criteria
+
+    - [ ] API reference updated
+    - [ ] Usage examples added
+    - [ ] Changelog entry written
+  EOT
+}
+
 # Look up a user
 data "notion_user" "admin" {
   email = "admin@example.com"
