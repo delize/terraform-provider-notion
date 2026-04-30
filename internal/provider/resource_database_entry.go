@@ -273,15 +273,8 @@ func (r *DatabaseEntryResource) Read(ctx context.Context, req resource.ReadReque
 
 	readEntryProperties(page, &state, &resp.Diagnostics)
 
-	// Fetch markdown content if it was previously set in state
-	if !state.Markdown.IsNull() {
-		mdResp, err := r.mdClient.GetPageMarkdown(ctx, state.ID.ValueString())
-		if err != nil {
-			resp.Diagnostics.AddError("Error reading entry markdown", err.Error())
-			return
-		}
-		state.Markdown = types.StringValue(mdResp.Markdown)
-	}
+	// Markdown is managed by the user's config; we don't read it back from the
+	// API to avoid perpetual diffs caused by Notion's content normalization.
 
 	resp.Diagnostics.Append(resp.State.Set(ctx, &state)...)
 }
@@ -330,12 +323,12 @@ func (r *DatabaseEntryResource) Update(ctx context.Context, req resource.UpdateR
 
 	// Update markdown content if set
 	if !plan.Markdown.IsNull() && !plan.Markdown.IsUnknown() {
-		mdResp, err := r.mdClient.ReplacePageMarkdown(ctx, plan.ID.ValueString(), plan.Markdown.ValueString())
+		_, err = r.mdClient.ReplacePageMarkdown(ctx, plan.ID.ValueString(), plan.Markdown.ValueString())
 		if err != nil {
 			resp.Diagnostics.AddError("Error updating entry markdown", err.Error())
 			return
 		}
-		plan.Markdown = types.StringValue(mdResp.Markdown)
+		// Keep plan value in state rather than API response to avoid normalization diffs
 	}
 
 	resp.Diagnostics.Append(resp.State.Set(ctx, &plan)...)
