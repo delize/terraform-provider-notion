@@ -20,7 +20,8 @@ var (
 )
 
 type PageResource struct {
-	client *notionapi.Client
+	client   *notionapi.Client
+	mdClient *markdownClient
 }
 
 type PageResourceModel struct {
@@ -29,6 +30,7 @@ type PageResourceModel struct {
 	Title        types.String `tfsdk:"title"`
 	URL          types.String `tfsdk:"url"`
 	Icon         types.String `tfsdk:"icon"`
+	Markdown     types.String `tfsdk:"markdown"`
 }
 
 func NewPageResource() resource.Resource {
@@ -74,6 +76,11 @@ func (r *PageResource) Schema(_ context.Context, _ resource.SchemaRequest, resp 
 				Computed:    true,
 				Default:     stringdefault.StaticString(""),
 			},
+			"markdown": schema.StringAttribute{
+				Description: "Page content as enhanced markdown. Mutually exclusive with managing content via notion_block resources. " +
+					"Note: Notion may normalize the markdown content, so the stored value may differ slightly from what was submitted.",
+				Optional: true,
+			},
 		},
 	}
 }
@@ -89,6 +96,7 @@ func (r *PageResource) Configure(_ context.Context, req resource.ConfigureReques
 		return
 	}
 	r.client = client
+	r.mdClient = newMarkdownClient(client)
 }
 
 func (r *PageResource) Create(ctx context.Context, req resource.CreateRequest, resp *resource.CreateResponse) {
@@ -98,6 +106,52 @@ func (r *PageResource) Create(ctx context.Context, req resource.CreateRequest, r
 		return
 	}
 
+	if !plan.Markdown.IsNull() && !plan.Markdown.IsUnknown() {
+		r.createWithMarkdown(ctx, &plan, resp)
+	} else {
+		r.createWithoutMarkdown(ctx, &plan, resp)
+	}
+}
+
+func (r *PageResource) createWithMarkdown(ctx context.Context, plan *PageResourceModel, resp *resource.CreateResponse) {
+	pageID, pageURL, err := r.mdClient.CreatePageWithMarkdownAndTitle(
+		ctx,
+		plan.ParentPageID.ValueString(),
+		plan.Title.ValueString(),
+		plan.Markdown.ValueString(),
+	)
+	if err != nil {
+		resp.Diagnostics.AddError("Error creating page with markdown", err.Error())
+		return
+	}
+
+	plan.ID = types.StringValue(normalizeID(pageID))
+	plan.URL = types.StringValue(pageURL)
+
+	// Set icon if provided via a separate update since markdown create doesn't support it
+	if plan.Icon.ValueString() != "" {
+		emoji := notionapi.Emoji(plan.Icon.ValueString())
+		page, err := r.client.Page.Update(ctx, notionapi.PageID(pageID), &notionapi.PageUpdateRequest{
+			Icon: &notionapi.Icon{
+				Type:  "emoji",
+				Emoji: &emoji,
+			},
+		})
+		if err != nil {
+			resp.Diagnostics.AddError("Error setting page icon", err.Error())
+			return
+		}
+		if page.Icon != nil && page.Icon.Emoji != nil {
+			plan.Icon = types.StringValue(string(*page.Icon.Emoji))
+		}
+	} else {
+		plan.Icon = types.StringValue("")
+	}
+
+	resp.Diagnostics.Append(resp.State.Set(ctx, plan)...)
+}
+
+func (r *PageResource) createWithoutMarkdown(ctx context.Context, plan *PageResourceModel, resp *resource.CreateResponse) {
 	params := &notionapi.PageCreateRequest{
 		Parent: notionapi.Parent{
 			Type:   notionapi.ParentTypePageID,
@@ -133,7 +187,7 @@ func (r *PageResource) Create(ctx context.Context, req resource.CreateRequest, r
 		plan.Icon = types.StringValue("")
 	}
 
-	resp.Diagnostics.Append(resp.State.Set(ctx, &plan)...)
+	resp.Diagnostics.Append(resp.State.Set(ctx, plan)...)
 }
 
 func (r *PageResource) Read(ctx context.Context, req resource.ReadRequest, resp *resource.ReadResponse) {
@@ -173,6 +227,9 @@ func (r *PageResource) Read(ctx context.Context, req resource.ReadRequest, resp 
 		state.Icon = types.StringValue("")
 	}
 
+	// Markdown is managed by the user's config; we don't read it back from the
+	// API to avoid perpetual diffs caused by Notion's content normalization.
+
 	resp.Diagnostics.Append(resp.State.Set(ctx, &state)...)
 }
 
@@ -183,6 +240,7 @@ func (r *PageResource) Update(ctx context.Context, req resource.UpdateRequest, r
 		return
 	}
 
+	// Update page properties (title, icon)
 	params := &notionapi.PageUpdateRequest{
 		Properties: notionapi.Properties{
 			"title": notionapi.TitleProperty{
@@ -212,6 +270,17 @@ func (r *PageResource) Update(ctx context.Context, req resource.UpdateRequest, r
 	} else {
 		plan.Icon = types.StringValue("")
 	}
+
+	// Update markdown content if set
+	if !plan.Markdown.IsNull() && !plan.Markdown.IsUnknown() {
+		_, err = r.mdClient.ReplacePageMarkdown(ctx, plan.ID.ValueString(), plan.Markdown.ValueString())
+		if err != nil {
+			resp.Diagnostics.AddError("Error updating page markdown", err.Error())
+			return
+		}
+		// Keep plan value in state rather than API response to avoid normalization diffs
+	}
+
 	resp.Diagnostics.Append(resp.State.Set(ctx, &plan)...)
 }
 

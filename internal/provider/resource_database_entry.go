@@ -22,7 +22,8 @@ var (
 )
 
 type DatabaseEntryResource struct {
-	client *notionapi.Client
+	client   *notionapi.Client
+	mdClient *markdownClient
 }
 
 type DatabaseEntryResourceModel struct {
@@ -30,6 +31,7 @@ type DatabaseEntryResourceModel struct {
 	Database              types.String `tfsdk:"database"`
 	Title                 types.String `tfsdk:"title"`
 	URL                   types.String `tfsdk:"url"`
+	Markdown              types.String `tfsdk:"markdown"`
 	RichTextProperties    types.Map    `tfsdk:"rich_text_properties"`
 	NumberProperties      types.Map    `tfsdk:"number_properties"`
 	CheckboxProperties    types.Map    `tfsdk:"checkbox_properties"`
@@ -77,6 +79,11 @@ func (r *DatabaseEntryResource) Schema(_ context.Context, _ resource.SchemaReque
 				PlanModifiers: []planmodifier.String{
 					stringplanmodifier.UseStateForUnknown(),
 				},
+			},
+			"markdown": schema.StringAttribute{
+				Description: "Entry page body content as enhanced markdown. " +
+					"Note: Notion may normalize the markdown content, so the stored value may differ slightly from what was submitted.",
+				Optional: true,
 			},
 			"rich_text_properties": schema.MapAttribute{
 				Description: "Map of rich text property name to string value.",
@@ -138,6 +145,7 @@ func (r *DatabaseEntryResource) Configure(_ context.Context, req resource.Config
 		return
 	}
 	r.client = client
+	r.mdClient = newMarkdownClient(client)
 }
 
 // findTitlePropertyName retrieves the database and returns the name of the title property.
@@ -167,7 +175,42 @@ func (r *DatabaseEntryResource) Create(ctx context.Context, req resource.CreateR
 		return
 	}
 
-	properties := buildEntryProperties(ctx, &plan, &resp.Diagnostics)
+	if !plan.Markdown.IsNull() && !plan.Markdown.IsUnknown() {
+		r.createWithMarkdown(ctx, &plan, titlePropName, resp)
+	} else {
+		r.createWithoutMarkdown(ctx, &plan, titlePropName, resp)
+	}
+}
+
+func (r *DatabaseEntryResource) createWithMarkdown(ctx context.Context, plan *DatabaseEntryResourceModel, titlePropName string, resp *resource.CreateResponse) {
+	// Build properties as raw JSON-compatible map for the markdown client
+	props := make(map[string]interface{})
+	props[titlePropName] = map[string]interface{}{
+		"type": "title",
+		"title": []map[string]interface{}{
+			{"type": "text", "text": map[string]string{"content": plan.Title.ValueString()}},
+		},
+	}
+
+	pageID, pageURL, err := r.mdClient.CreateDatabaseEntryWithMarkdown(
+		ctx,
+		plan.Database.ValueString(),
+		plan.Markdown.ValueString(),
+		props,
+	)
+	if err != nil {
+		resp.Diagnostics.AddError("Error creating database entry with markdown", err.Error())
+		return
+	}
+
+	plan.ID = types.StringValue(normalizeID(pageID))
+	plan.URL = types.StringValue(pageURL)
+
+	resp.Diagnostics.Append(resp.State.Set(ctx, plan)...)
+}
+
+func (r *DatabaseEntryResource) createWithoutMarkdown(ctx context.Context, plan *DatabaseEntryResourceModel, titlePropName string, resp *resource.CreateResponse) {
+	properties := buildEntryProperties(ctx, plan, &resp.Diagnostics)
 	if resp.Diagnostics.HasError() {
 		return
 	}
@@ -193,7 +236,7 @@ func (r *DatabaseEntryResource) Create(ctx context.Context, req resource.CreateR
 	plan.ID = types.StringValue(normalizeID(string(page.ID)))
 	plan.URL = types.StringValue(page.URL)
 
-	resp.Diagnostics.Append(resp.State.Set(ctx, &plan)...)
+	resp.Diagnostics.Append(resp.State.Set(ctx, plan)...)
 }
 
 func (r *DatabaseEntryResource) Read(ctx context.Context, req resource.ReadRequest, resp *resource.ReadResponse) {
@@ -229,6 +272,9 @@ func (r *DatabaseEntryResource) Read(ctx context.Context, req resource.ReadReque
 	}
 
 	readEntryProperties(page, &state, &resp.Diagnostics)
+
+	// Markdown is managed by the user's config; we don't read it back from the
+	// API to avoid perpetual diffs caused by Notion's content normalization.
 
 	resp.Diagnostics.Append(resp.State.Set(ctx, &state)...)
 }
@@ -274,6 +320,17 @@ func (r *DatabaseEntryResource) Update(ctx context.Context, req resource.UpdateR
 	}
 
 	plan.URL = types.StringValue(page.URL)
+
+	// Update markdown content if set
+	if !plan.Markdown.IsNull() && !plan.Markdown.IsUnknown() {
+		_, err = r.mdClient.ReplacePageMarkdown(ctx, plan.ID.ValueString(), plan.Markdown.ValueString())
+		if err != nil {
+			resp.Diagnostics.AddError("Error updating entry markdown", err.Error())
+			return
+		}
+		// Keep plan value in state rather than API response to avoid normalization diffs
+	}
+
 	resp.Diagnostics.Append(resp.State.Set(ctx, &plan)...)
 }
 

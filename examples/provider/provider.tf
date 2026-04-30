@@ -17,6 +17,30 @@ resource "notion_page" "example" {
   title          = "My Terraform Page"
 }
 
+# Create a page with markdown content
+resource "notion_page" "meeting_notes" {
+  parent_page_id = notion_page.example.id
+  title          = "Sprint Planning"
+  markdown       = <<-EOT
+    ## Agenda
+
+    - [ ] Review last sprint
+    - [ ] Discuss priorities
+    - [x] Assign tasks
+
+    ## Notes
+
+    Discussed roadmap priorities for **Q3**.
+
+    > Ship the MVP by Friday.
+
+    ```python
+    def greet(name):
+        return f"Hello, {name}!"
+    ```
+  EOT
+}
+
 # Create a database
 resource "notion_database" "tasks" {
   parent             = notion_page.example.id
@@ -57,6 +81,23 @@ resource "notion_database_entry" "first_task" {
   title    = "Set up Terraform"
 }
 
+# Add a database entry with markdown body content
+resource "notion_database_entry" "documented_task" {
+  database = notion_database.tasks.id
+  title    = "Write documentation"
+  markdown = <<-EOT
+    ## Description
+
+    Write comprehensive docs for the new feature.
+
+    ## Acceptance Criteria
+
+    - [ ] API reference updated
+    - [ ] Usage examples added
+    - [ ] Changelog entry written
+  EOT
+}
+
 # Look up a user
 data "notion_user" "admin" {
   email = "admin@example.com"
@@ -69,6 +110,11 @@ data "notion_database" "existing" {
 
 data "notion_page" "existing" {
   query = "My Existing Page"
+}
+
+# Read an existing page's content as markdown
+data "notion_page_markdown" "existing_content" {
+  page_id = data.notion_page.existing.id
 }
 
 # List entries in a database
