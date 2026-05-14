@@ -136,6 +136,7 @@ func (r *PageResource) createWithMarkdown(ctx context.Context, plan *PageResourc
 				Type:  "emoji",
 				Emoji: &emoji,
 			},
+			Properties: notionapi.Properties{},
 		})
 		if err != nil {
 			resp.Diagnostics.AddError("Error setting page icon", err.Error())
@@ -292,7 +293,8 @@ func (r *PageResource) Delete(ctx context.Context, req resource.DeleteRequest, r
 	}
 
 	_, err := r.client.Page.Update(ctx, notionapi.PageID(state.ID.ValueString()), &notionapi.PageUpdateRequest{
-		Archived: true,
+		Archived:   true,
+		Properties: notionapi.Properties{},
 	})
 	if err != nil {
 		resp.Diagnostics.AddError("Error archiving page", err.Error())
