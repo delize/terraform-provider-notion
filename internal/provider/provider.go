@@ -106,6 +106,9 @@ func (p *NotionProvider) DataSources(_ context.Context) []func() datasource.Data
 		NewPageDataSource,
 		NewPageMarkdownDataSource,
 		NewUserDataSource,
+		NewUsersDataSource,
 		NewDatabaseEntriesDataSource,
+		NewSearchDataSource,
+		NewBlocksDataSource,
 	}
 }
