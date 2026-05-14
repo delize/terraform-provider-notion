@@ -37,12 +37,16 @@ jobs:
     needs: build
     strategy:
       fail-fast: false
+      # Serialize matrix runs — both versions hit the same Notion workspace
+      # and concurrent runs trip rate limiting / interference.
+      max-parallel: 1
       matrix:
         terraform: ['1.13.*', '1.14.*']
     env:
       TF_ACC: "1"
       NOTION_TOKEN: ${{ secrets.NOTION_TOKEN }}
       NOTION_TEST_PARENT_PAGE_ID: ${{ secrets.NOTION_TEST_PARENT_PAGE_ID }}
+      GITHUB_PR_NUMBER: ${{ github.event.pull_request.number }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
@@ -64,12 +68,16 @@ jobs:
     environment: acceptance
     strategy:
       fail-fast: false
+      # Serialize matrix runs — both versions hit the same Notion workspace
+      # and concurrent runs trip rate limiting / interference.
+      max-parallel: 1
       matrix:
         terraform: ['1.13.*', '1.14.*']
     env:
       TF_ACC: "1"
       NOTION_TOKEN: ${{ secrets.NOTION_TOKEN }}
       NOTION_TEST_PARENT_PAGE_ID: ${{ secrets.NOTION_TEST_PARENT_PAGE_ID }}
+      GITHUB_PR_NUMBER: ${{ github.event.pull_request.number }}
     steps:
       - uses: actions/checkout@v4
         with:

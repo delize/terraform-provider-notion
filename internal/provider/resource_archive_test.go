@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"strconv"
 	"testing"
 
 	"github.com/hashicorp/terraform-plugin-testing/helper/resource"
@@ -58,15 +59,25 @@ func findRootPageID(t *testing.T, client *notionapi.Client) string {
 	return ""
 }
 
+// testRunSuffix returns a per-run suffix for naming ephemeral test pages.
+// In CI on a PR, GITHUB_PR_NUMBER is wired up so debris is identifiable
+// (e.g. "tf-acc-test-page-delete-PR-7"). Locally, falls back to PID.
+func testRunSuffix() string {
+	if pr := os.Getenv("GITHUB_PR_NUMBER"); pr != "" {
+		return "PR-" + pr
+	}
+	return strconv.Itoa(os.Getpid())
+}
+
 // makeIsolatedParentPage creates a fresh page via the Notion API to act as the
-// parent for resources under test, and registers a cleanup that archives it
+// parent for resources under test, and registers a cleanup that trashes it
 // when the test ends. Returns the new page's normalized ID.
 func makeIsolatedParentPage(t *testing.T, client *notionapi.Client, label string) string {
 	t.Helper()
 	rootID := findRootPageID(t, client)
 	ctx := context.Background()
 
-	titleText := fmt.Sprintf("tf-acc-test-%s-%d", label, os.Getpid())
+	titleText := fmt.Sprintf("tf-acc-test-%s-%s", label, testRunSuffix())
 	page, err := client.Page.Create(ctx, &notionapi.PageCreateRequest{
 		Parent: notionapi.Parent{
 			Type:   notionapi.ParentTypePageID,
@@ -87,19 +98,22 @@ func makeIsolatedParentPage(t *testing.T, client *notionapi.Client, label string
 
 	parentID := normalizeID(string(page.ID))
 	t.Cleanup(func() {
-		if _, err := client.Block.Delete(context.Background(), notionapi.BlockID(parentID)); err != nil {
-			t.Logf("cleanup: failed to archive parent page %s: %v", parentID, err)
+		token := os.Getenv("NOTION_TOKEN")
+		if err := trashObject(context.Background(), token, "pages", parentID); err != nil {
+			t.Logf("cleanup: failed to trash parent page %s: %v", parentID, err)
 		}
 	})
 	return parentID
 }
 
-// testAccCheckResourcesArchived returns a CheckDestroy that verifies every
+// testAccCheckResourcesTrashed returns a CheckDestroy that verifies every
 // notion_page, notion_database, and notion_database_entry resource in state
-// was actually archived in Notion after destroy.
-func testAccCheckResourcesArchived(t *testing.T) resource.TestCheckFunc {
+// was actually moved to trash in Notion after destroy. Uses the in_trash
+// shim so a successful check means the item is gone from the sidebar, not
+// just that the legacy `archived` field flipped.
+func testAccCheckResourcesTrashed(t *testing.T) resource.TestCheckFunc {
 	return func(s *terraform.State) error {
-		client := notionTestClient(t)
+		token := os.Getenv("NOTION_TOKEN")
 		ctx := context.Background()
 
 		for name, rs := range s.RootModule().Resources {
@@ -107,23 +121,21 @@ func testAccCheckResourcesArchived(t *testing.T) resource.TestCheckFunc {
 			if id == "" {
 				continue
 			}
+			var kind string
 			switch rs.Type {
 			case "notion_page", "notion_database_entry":
-				page, err := client.Page.Get(ctx, notionapi.PageID(id))
-				if err != nil {
-					return fmt.Errorf("fetching %s (%s) after destroy: %w", name, id, err)
-				}
-				if !page.Archived {
-					return fmt.Errorf("%s (%s) was not archived after destroy", name, id)
-				}
+				kind = "pages"
 			case "notion_database":
-				db, err := client.Database.Get(ctx, notionapi.DatabaseID(id))
-				if err != nil {
-					return fmt.Errorf("fetching %s (%s) after destroy: %w", name, id, err)
-				}
-				if !db.Archived {
-					return fmt.Errorf("%s (%s) was not archived after destroy", name, id)
-				}
+				kind = "databases"
+			default:
+				continue
+			}
+			trashed, err := isObjectTrashed(ctx, token, kind, id)
+			if err != nil {
+				return fmt.Errorf("checking %s (%s): %w", name, id, err)
+			}
+			if !trashed {
+				return fmt.Errorf("%s (%s) was not trashed after destroy", name, id)
 			}
 		}
 		return nil
@@ -133,7 +145,8 @@ func testAccCheckResourcesArchived(t *testing.T) resource.TestCheckFunc {
 // TestAccPageResource_DeleteWithChildBlocks reproduces the scenario from
 // https://github.com/delize/terraform-provider-notion/issues/2: a page with
 // child blocks fails to delete because the archive request was sending
-// `properties: null` instead of an object.
+// `properties: null` instead of an object. Now also verifies the page is
+// actually trashed (not just flagged archived).
 func TestAccPageResource_DeleteWithChildBlocks(t *testing.T) {
 	if os.Getenv("NOTION_TOKEN") == "" {
 		t.Skip("NOTION_TOKEN not set")
@@ -143,7 +156,7 @@ func TestAccPageResource_DeleteWithChildBlocks(t *testing.T) {
 
 	resource.Test(t, resource.TestCase{
 		ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
-		CheckDestroy:             testAccCheckResourcesArchived(t),
+		CheckDestroy:             testAccCheckResourcesTrashed(t),
 		Steps: []resource.TestStep{
 			{
 				Config: testAccPageWithBlocksConfig(parentPageID, "Archive Test Page"),
@@ -157,8 +170,8 @@ func TestAccPageResource_DeleteWithChildBlocks(t *testing.T) {
 	})
 }
 
-// TestAccDatabaseResource_Delete verifies the database delete path archives
-// the database without error.
+// TestAccDatabaseResource_Delete verifies the database delete path actually
+// trashes the database in Notion.
 func TestAccDatabaseResource_Delete(t *testing.T) {
 	if os.Getenv("NOTION_TOKEN") == "" {
 		t.Skip("NOTION_TOKEN not set")
@@ -168,7 +181,7 @@ func TestAccDatabaseResource_Delete(t *testing.T) {
 
 	resource.Test(t, resource.TestCase{
 		ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
-		CheckDestroy:             testAccCheckResourcesArchived(t),
+		CheckDestroy:             testAccCheckResourcesTrashed(t),
 		Steps: []resource.TestStep{
 			{
 				Config: testAccDatabaseResourceConfig(parentPageID, "Archive Test DB", "Name"),
@@ -180,8 +193,8 @@ func TestAccDatabaseResource_Delete(t *testing.T) {
 	})
 }
 
-// TestAccDatabaseEntryResource_Delete is a regression test for commit 81d553a
-// (the same root cause as issue #2, applied previously to database entries).
+// TestAccDatabaseEntryResource_Delete verifies the entry delete path
+// actually trashes the entry in Notion.
 func TestAccDatabaseEntryResource_Delete(t *testing.T) {
 	if os.Getenv("NOTION_TOKEN") == "" {
 		t.Skip("NOTION_TOKEN not set")
@@ -191,7 +204,7 @@ func TestAccDatabaseEntryResource_Delete(t *testing.T) {
 
 	resource.Test(t, resource.TestCase{
 		ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
-		CheckDestroy:             testAccCheckResourcesArchived(t),
+		CheckDestroy:             testAccCheckResourcesTrashed(t),
 		Steps: []resource.TestStep{
 			{
 				Config: testAccDatabaseEntryResourceConfig(parentPageID, "Archive Test Entry"),

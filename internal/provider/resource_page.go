@@ -292,12 +292,13 @@ func (r *PageResource) Delete(ctx context.Context, req resource.DeleteRequest, r
 		return
 	}
 
-	_, err := r.client.Page.Update(ctx, notionapi.PageID(state.ID.ValueString()), &notionapi.PageUpdateRequest{
-		Archived:   true,
-		Properties: notionapi.Properties{},
-	})
+	token, err := tokenForClient(r.client)
 	if err != nil {
-		resp.Diagnostics.AddError("Error archiving page", err.Error())
+		resp.Diagnostics.AddError("Error trashing page", err.Error())
+		return
+	}
+	if err := trashObject(ctx, token, "pages", state.ID.ValueString()); err != nil {
+		resp.Diagnostics.AddError("Error trashing page", err.Error())
 		return
 	}
 }

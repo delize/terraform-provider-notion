@@ -293,9 +293,13 @@ func (r *DatabaseResource) Delete(ctx context.Context, req resource.DeleteReques
 		return
 	}
 
-	_, err := r.client.Block.Delete(ctx, notionapi.BlockID(state.ID.ValueString()))
+	token, err := tokenForClient(r.client)
 	if err != nil {
-		resp.Diagnostics.AddError("Error archiving database", err.Error())
+		resp.Diagnostics.AddError("Error trashing database", err.Error())
+		return
+	}
+	if err := trashObject(ctx, token, "databases", state.ID.ValueString()); err != nil {
+		resp.Diagnostics.AddError("Error trashing database", err.Error())
 		return
 	}
 }
