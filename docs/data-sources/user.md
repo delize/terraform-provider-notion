@@ -13,7 +13,9 @@ Use this data source to look up a Notion workspace user by their email address.
 
 Notion's [`/v1/users`](https://developers.notion.com/reference/get-users) API does **not** support filtering, sorting, or searching server-side — its docs explicitly state: *"The API does not currently support filtering users by their email and/or name."*
 
-This data source therefore paginates through all users (100 per request) and filters client-side, short-circuiting as soon as it finds a match. For workspaces with many users this can mean several API calls per `Read` even though only one user is returned. To list multiple users, use the [`notion_users`](./users.md) data source — fetching the full set once and filtering with Terraform `for` expressions is cheaper than calling `notion_user` repeatedly.
+Email addresses are unique within a Notion workspace, so to look up one user this data source paginates through `/v1/users` (100 users per request) and matches each against `email`, stopping the moment it finds the unique match. In a small workspace that's typically one API call; in a large one it may be several before the match is found.
+
+If you need many users, prefer [`notion_users`](./users.md) — calling it once and filtering the result with Terraform `for` expressions is cheaper than calling `notion_user` repeatedly, since each `notion_user` call has to start scanning from the first page.
 
 ## Example Usage
 
