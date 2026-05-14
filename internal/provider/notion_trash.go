@@ -7,7 +7,9 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strconv"
 	"sync"
+	"time"
 
 	"github.com/jomei/notionapi"
 )
@@ -21,8 +23,11 @@ import (
 // behave correctly until the upstream SDK catches up.
 
 const (
-	notionAPIBaseURL     = "https://api.notion.com/v1"
+	notionAPIBaseURL      = "https://api.notion.com/v1"
 	notionTrashAPIVersion = "2026-03-11"
+	// Mirrors the SDK's default (notionapi.Client.maxRetries = 3) so the
+	// shim's rate-limit behavior matches the rest of the provider.
+	notionTrashMaxRetries = 3
 )
 
 // clientTokens maps API client pointers to their bearer tokens. The
@@ -45,6 +50,60 @@ func tokenForClient(client *notionapi.Client) (string, error) {
 	return v.(string), nil
 }
 
+// doNotionRequest performs an HTTP request against the Notion API with
+// 429-retry semantics matching the upstream SDK: retry up to
+// notionTrashMaxRetries times, honoring the Retry-After header. The caller
+// owns closing the returned response body.
+//
+// reqBody is passed by value (not as a Reader) so each retry attempt can
+// construct a fresh body without having to rewind a stream.
+func doNotionRequest(ctx context.Context, method, url, token string, reqBody []byte) (*http.Response, error) {
+	for attempt := 0; ; attempt++ {
+		var body io.Reader
+		if reqBody != nil {
+			body = bytes.NewReader(reqBody)
+		}
+		req, err := http.NewRequestWithContext(ctx, method, url, body)
+		if err != nil {
+			return nil, err
+		}
+		req.Header.Set("Authorization", "Bearer "+token)
+		req.Header.Set("Notion-Version", notionTrashAPIVersion)
+		if reqBody != nil {
+			req.Header.Set("Content-Type", "application/json")
+		}
+
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			return nil, err
+		}
+
+		if resp.StatusCode != http.StatusTooManyRequests {
+			return resp, nil
+		}
+
+		// Drain and close the 429 body before retrying.
+		_, _ = io.Copy(io.Discard, resp.Body)
+		_ = resp.Body.Close()
+
+		if attempt+1 >= notionTrashMaxRetries {
+			return nil, fmt.Errorf("notion API rate-limited %s %s after %d attempts", method, url, notionTrashMaxRetries)
+		}
+
+		retryAfter := 1
+		if hdr := resp.Header.Get("Retry-After"); hdr != "" {
+			if n, parseErr := strconv.Atoi(hdr); parseErr == nil && n > 0 {
+				retryAfter = n
+			}
+		}
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		case <-time.After(time.Duration(retryAfter) * time.Second):
+		}
+	}
+}
+
 // trashObject moves a Notion page or database to trash via the modern
 // in_trash field. objectKind must be "pages" or "databases".
 func trashObject(ctx context.Context, token, objectKind, id string) error {
@@ -53,15 +112,8 @@ func trashObject(ctx context.Context, token, objectKind, id string) error {
 	if err != nil {
 		return err
 	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodPatch, url, bytes.NewReader(body))
-	if err != nil {
-		return err
-	}
-	req.Header.Set("Authorization", "Bearer "+token)
-	req.Header.Set("Notion-Version", notionTrashAPIVersion)
-	req.Header.Set("Content-Type", "application/json")
 
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := doNotionRequest(ctx, http.MethodPatch, url, token, body)
 	if err != nil {
 		return err
 	}
@@ -79,14 +131,8 @@ func trashObject(ctx context.Context, token, objectKind, id string) error {
 // actually took effect (not just that the API returned success).
 func isObjectTrashed(ctx context.Context, token, objectKind, id string) (bool, error) {
 	url := fmt.Sprintf("%s/%s/%s", notionAPIBaseURL, objectKind, id)
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
-	if err != nil {
-		return false, err
-	}
-	req.Header.Set("Authorization", "Bearer "+token)
-	req.Header.Set("Notion-Version", notionTrashAPIVersion)
 
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := doNotionRequest(ctx, http.MethodGet, url, token, nil)
 	if err != nil {
 		return false, err
 	}
