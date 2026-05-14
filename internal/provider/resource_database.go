@@ -293,9 +293,7 @@ func (r *DatabaseResource) Delete(ctx context.Context, req resource.DeleteReques
 		return
 	}
 
-	_, err := r.client.Page.Update(ctx, notionapi.PageID(state.ID.ValueString()), &notionapi.PageUpdateRequest{
-		Archived: true,
-	})
+	_, err := r.client.Block.Delete(ctx, notionapi.BlockID(state.ID.ValueString()))
 	if err != nil {
 		resp.Diagnostics.AddError("Error archiving database", err.Error())
 		return
