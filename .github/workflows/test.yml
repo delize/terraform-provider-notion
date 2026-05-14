@@ -37,6 +37,9 @@ jobs:
     needs: build
     strategy:
       fail-fast: false
+      # Serialize matrix runs — both versions hit the same Notion workspace
+      # and concurrent runs trip rate limiting / interference.
+      max-parallel: 1
       matrix:
         terraform: ['1.13.*', '1.14.*']
     env:
@@ -65,6 +68,9 @@ jobs:
     environment: acceptance
     strategy:
       fail-fast: false
+      # Serialize matrix runs — both versions hit the same Notion workspace
+      # and concurrent runs trip rate limiting / interference.
+      max-parallel: 1
       matrix:
         terraform: ['1.13.*', '1.14.*']
     env:
