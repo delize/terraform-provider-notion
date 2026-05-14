@@ -5,10 +5,18 @@ on:
     branches: [main]
   pull_request:
     branches: [main]
+  # pull_request_target lets us run acceptance with secrets on fork PRs.
+  # Combined with `environment: acceptance` (required reviewers), a maintainer
+  # must approve before secrets are released to PR-controlled code.
+  pull_request_target:
+    branches: [main]
   workflow_dispatch:
 
 jobs:
   build:
+    # Skip on pull_request_target to avoid duplicate build runs alongside
+    # pull_request (both fire for the same PR).
+    if: github.event_name != 'pull_request_target'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -18,10 +26,19 @@ jobs:
       - run: go build ./...
       - run: go vet ./...
 
+  # Trusted acceptance: push to main, manual dispatch, and same-repo branch
+  # PRs. Uses repo-level secrets directly without an environment gate.
   acceptance:
+    if: |
+      github.event_name == 'push' ||
+      github.event_name == 'workflow_dispatch' ||
+      (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository)
     runs-on: ubuntu-latest
     needs: build
-    if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
+    strategy:
+      fail-fast: false
+      matrix:
+        terraform: ['1.13.*', '1.14.*']
     env:
       TF_ACC: "1"
       NOTION_TOKEN: ${{ secrets.NOTION_TOKEN }}
@@ -31,4 +48,39 @@ jobs:
       - uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ matrix.terraform }}
+          terraform_wrapper: false
+      - run: go test ./internal/provider/ -v -timeout 120m
+
+  # Fork PR acceptance: pull_request_target runs in base-branch context with
+  # secret access. The `acceptance` environment's required-reviewer rule gates
+  # secret release until a maintainer approves. We explicitly check out the
+  # PR head so the actual PR code is exercised.
+  acceptance-fork:
+    if: github.event_name == 'pull_request_target' && github.event.pull_request.head.repo.full_name != github.repository
+    runs-on: ubuntu-latest
+    environment: acceptance
+    strategy:
+      fail-fast: false
+      matrix:
+        terraform: ['1.13.*', '1.14.*']
+    env:
+      TF_ACC: "1"
+      NOTION_TOKEN: ${{ secrets.NOTION_TOKEN }}
+      NOTION_TEST_PARENT_PAGE_ID: ${{ secrets.NOTION_TEST_PARENT_PAGE_ID }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ matrix.terraform }}
+          terraform_wrapper: false
+      - run: go build ./...
+      - run: go vet ./...
       - run: go test ./internal/provider/ -v -timeout 120m
