@@ -70,6 +70,7 @@ func (p *NotionProvider) Configure(ctx context.Context, req provider.ConfigureRe
 	}
 
 	client := notionapi.NewClient(notionapi.Token(token))
+	registerClientToken(client, token)
 
 	resp.ResourceData = client
 	resp.DataSourceData = client

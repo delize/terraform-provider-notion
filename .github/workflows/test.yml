@@ -43,6 +43,7 @@ jobs:
       TF_ACC: "1"
       NOTION_TOKEN: ${{ secrets.NOTION_TOKEN }}
       NOTION_TEST_PARENT_PAGE_ID: ${{ secrets.NOTION_TEST_PARENT_PAGE_ID }}
+      GITHUB_PR_NUMBER: ${{ github.event.pull_request.number }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
@@ -70,6 +71,7 @@ jobs:
       TF_ACC: "1"
       NOTION_TOKEN: ${{ secrets.NOTION_TOKEN }}
       NOTION_TEST_PARENT_PAGE_ID: ${{ secrets.NOTION_TEST_PARENT_PAGE_ID }}
+      GITHUB_PR_NUMBER: ${{ github.event.pull_request.number }}
     steps:
       - uses: actions/checkout@v4
         with:

@@ -341,14 +341,13 @@ func (r *DatabaseEntryResource) Delete(ctx context.Context, req resource.DeleteR
 		return
 	}
 
-	archiveReq := &notionapi.PageUpdateRequest{
-		Archived:   true,
-		Properties: notionapi.Properties{},
-	}
-
-	_, err := r.client.Page.Update(ctx, notionapi.PageID(state.ID.ValueString()), archiveReq)
+	token, err := tokenForClient(r.client)
 	if err != nil {
-		resp.Diagnostics.AddError("Error archiving database entry", err.Error())
+		resp.Diagnostics.AddError("Error trashing database entry", err.Error())
+		return
+	}
+	if err := trashObject(ctx, token, "pages", state.ID.ValueString()); err != nil {
+		resp.Diagnostics.AddError("Error trashing database entry", err.Error())
 		return
 	}
 }
