@@ -80,6 +80,7 @@ func (p *NotionProvider) Resources(_ context.Context) []func() resource.Resource
 	return []func() resource.Resource{
 		NewPageResource,
 		NewBlockResource,
+		NewCommentResource,
 		NewDatabaseResource,
 		NewDatabaseEntryResource,
 		NewDatabasePropertySelectResource,
