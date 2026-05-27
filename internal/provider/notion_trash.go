@@ -30,6 +30,12 @@ const (
 	notionTrashMaxRetries = 3
 )
 
+// trashHTTPClient is a package-level http.Client whose transport retries
+// on 5xx and edge HTML errors (see retry_transport.go). doNotionRequest
+// uses this so the trash shim gets the same treatment as the rest of the
+// provider, on top of its own existing 429 retry loop below.
+var trashHTTPClient = newRetryHTTPClient()
+
 // clientTokens maps API client pointers to their bearer tokens. The
 // provider's Configure stores the token here; the trash shim looks it up.
 // This avoids changing every resource's Configure signature to plumb the
@@ -73,7 +79,7 @@ func doNotionRequest(ctx context.Context, method, url, token string, reqBody []b
 			req.Header.Set("Content-Type", "application/json")
 		}
 
-		resp, err := http.DefaultClient.Do(req)
+		resp, err := trashHTTPClient.Do(req)
 		if err != nil {
 			return nil, err
 		}
