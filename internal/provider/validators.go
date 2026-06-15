@@ -221,3 +221,34 @@ func (v blockColorValidator) ValidateString(_ context.Context, req validator.Str
 func BlockColorValidator() validator.String {
 	return blockColorValidator{}
 }
+
+// markdownInsertPositionValidator validates that a string is "start" or "end".
+type markdownInsertPositionValidator struct{}
+
+func (v markdownInsertPositionValidator) Description(_ context.Context) string {
+	return `value must be "start" or "end"`
+}
+
+func (v markdownInsertPositionValidator) MarkdownDescription(ctx context.Context) string {
+	return v.Description(ctx)
+}
+
+func (v markdownInsertPositionValidator) ValidateString(_ context.Context, req validator.StringRequest, resp *validator.StringResponse) {
+	if req.ConfigValue.IsNull() || req.ConfigValue.IsUnknown() {
+		return
+	}
+	val := req.ConfigValue.ValueString()
+	if val == "start" || val == "end" {
+		return
+	}
+	resp.Diagnostics.AddAttributeError(
+		req.Path,
+		"Invalid Insert Position",
+		fmt.Sprintf(`Expected "start" or "end", got: %s`, val),
+	)
+}
+
+// MarkdownInsertPositionValidator returns a validator for the markdown_insert position field.
+func MarkdownInsertPositionValidator() validator.String {
+	return markdownInsertPositionValidator{}
+}

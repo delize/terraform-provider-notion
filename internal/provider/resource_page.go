@@ -4,12 +4,14 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/hashicorp/terraform-plugin-framework/diag"
 	"github.com/hashicorp/terraform-plugin-framework/path"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/planmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/stringdefault"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/stringplanmodifier"
+	"github.com/hashicorp/terraform-plugin-framework/schema/validator"
 	"github.com/hashicorp/terraform-plugin-framework/types"
 	"github.com/jomei/notionapi"
 )
@@ -25,12 +27,22 @@ type PageResource struct {
 }
 
 type PageResourceModel struct {
-	ID           types.String `tfsdk:"id"`
-	ParentPageID types.String `tfsdk:"parent_page_id"`
-	Title        types.String `tfsdk:"title"`
-	URL          types.String `tfsdk:"url"`
-	Icon         types.String `tfsdk:"icon"`
-	Markdown     types.String `tfsdk:"markdown"`
+	ID             types.String `tfsdk:"id"`
+	ParentPageID   types.String `tfsdk:"parent_page_id"`
+	Title          types.String `tfsdk:"title"`
+	URL            types.String `tfsdk:"url"`
+	Icon           types.String `tfsdk:"icon"`
+	Markdown       types.String `tfsdk:"markdown"`
+	MarkdownInsert *MarkdownInsertModel `tfsdk:"markdown_insert"`
+}
+
+// MarkdownInsertModel represents a one-shot markdown insertion at the start or
+// end of the page using the 2026-05-15 insert_content.position API. Each
+// change to either field triggers another insert — this is a trigger, not a
+// declarative state, so removing content requires manual cleanup.
+type MarkdownInsertModel struct {
+	Content  types.String `tfsdk:"content"`
+	Position types.String `tfsdk:"position"`
 }
 
 func NewPageResource() resource.Resource {
@@ -81,6 +93,25 @@ func (r *PageResource) Schema(_ context.Context, _ resource.SchemaRequest, resp 
 					"Note: Notion may normalize the markdown content, so the stored value may differ slightly from what was submitted.",
 				Optional: true,
 			},
+			"markdown_insert": schema.SingleNestedAttribute{
+				Description: "Append or prepend markdown to the page without rewriting the existing content. " +
+					"Each change to `content` or `position` triggers another insert via the Notion insert_content endpoint; " +
+					"this is an imperative trigger, not declarative state. Removing the block does not remove the previously inserted content.",
+				Optional: true,
+				Attributes: map[string]schema.Attribute{
+					"content": schema.StringAttribute{
+						Description: "Markdown to insert into the page.",
+						Required:    true,
+					},
+					"position": schema.StringAttribute{
+						Description: `Where to insert the content. Must be "start" (prepend) or "end" (append).`,
+						Required:    true,
+						Validators: []validator.String{
+							MarkdownInsertPositionValidator(),
+						},
+					},
+				},
+			},
 		},
 	}
 }
@@ -127,6 +158,13 @@ func (r *PageResource) createWithMarkdown(ctx context.Context, plan *PageResourc
 
 	plan.ID = types.StringValue(normalizeID(pageID))
 	plan.URL = types.StringValue(pageURL)
+
+	if diags := r.applyMarkdownInsert(ctx, plan); diags != nil {
+		resp.Diagnostics.Append(diags...)
+		if resp.Diagnostics.HasError() {
+			return
+		}
+	}
 
 	// Set icon if provided via a separate update since markdown create doesn't support it
 	if plan.Icon.ValueString() != "" {
@@ -186,6 +224,13 @@ func (r *PageResource) createWithoutMarkdown(ctx context.Context, plan *PageReso
 		plan.Icon = types.StringValue(string(*page.Icon.Emoji))
 	} else {
 		plan.Icon = types.StringValue("")
+	}
+
+	if diags := r.applyMarkdownInsert(ctx, plan); diags != nil {
+		resp.Diagnostics.Append(diags...)
+		if resp.Diagnostics.HasError() {
+			return
+		}
 	}
 
 	resp.Diagnostics.Append(resp.State.Set(ctx, plan)...)
@@ -282,7 +327,39 @@ func (r *PageResource) Update(ctx context.Context, req resource.UpdateRequest, r
 		// Keep plan value in state rather than API response to avoid normalization diffs
 	}
 
+	if diags := r.applyMarkdownInsert(ctx, &plan); diags != nil {
+		resp.Diagnostics.Append(diags...)
+		if resp.Diagnostics.HasError() {
+			return
+		}
+	}
+
 	resp.Diagnostics.Append(resp.State.Set(ctx, &plan)...)
+}
+
+// applyMarkdownInsert performs an insert_content PATCH if a markdown_insert
+// block is configured on the plan. Returns diagnostics for the caller to
+// append. Returns nil when no insert is configured.
+func (r *PageResource) applyMarkdownInsert(ctx context.Context, plan *PageResourceModel) diag.Diagnostics {
+	if plan.MarkdownInsert == nil {
+		return nil
+	}
+	if plan.MarkdownInsert.Content.IsNull() || plan.MarkdownInsert.Content.IsUnknown() {
+		return nil
+	}
+
+	_, err := r.mdClient.InsertPageMarkdown(
+		ctx,
+		plan.ID.ValueString(),
+		plan.MarkdownInsert.Content.ValueString(),
+		plan.MarkdownInsert.Position.ValueString(),
+	)
+	if err != nil {
+		var diags diag.Diagnostics
+		diags.AddError("Error inserting markdown into page", err.Error())
+		return diags
+	}
+	return nil
 }
 
 func (r *PageResource) Delete(ctx context.Context, req resource.DeleteRequest, resp *resource.DeleteResponse) {
