@@ -259,6 +259,20 @@ func (r *PageResource) Read(ctx context.Context, req resource.ReadRequest, resp 
 
 	if page.Parent.Type == notionapi.ParentTypePageID {
 		state.ParentPageID = types.StringValue(normalizeID(string(page.Parent.PageID)))
+	} else {
+		// 2026-05-11: pages can now be parented by an agent ({"type": "agent_id"}).
+		// The SDK is pinned to an older Notion-Version and doesn't model that
+		// type, so anything other than page_id falls through here. Surface a
+		// warning so the user notices the parent moved out from under
+		// Terraform instead of silently keeping the old parent_page_id in state.
+		resp.Diagnostics.AddWarning(
+			"Page parent type changed",
+			fmt.Sprintf("Page %s now has parent type %q (Terraform-managed pages expect page_id). "+
+				"State retains the previously known parent_page_id; you may need to recreate this "+
+				"resource or reparent the page in Notion to keep state and reality in sync. "+
+				"agent_id parents (2026-05-11) are not yet manageable through this provider.",
+				state.ID.ValueString(), page.Parent.Type),
+		)
 	}
 
 	if titleProp, ok := page.Properties["title"]; ok {

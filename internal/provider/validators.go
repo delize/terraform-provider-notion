@@ -138,11 +138,12 @@ func RollupFunctionValidator() validator.String {
 
 // Valid block types for notion_block resource.
 var validBlockTypes = []string{
-	"paragraph", "heading_1", "heading_2", "heading_3",
+	"paragraph", "heading_1", "heading_2", "heading_3", "heading_4",
 	"bulleted_list_item", "numbered_list_item", "to_do", "toggle",
 	"quote", "callout", "code", "equation",
 	"divider", "table_of_contents", "bookmark", "embed", "image",
 	"synced_block", "column_list", "column",
+	"tabs", "tab",
 }
 
 // Valid block colors (10 foreground + 10 background).
