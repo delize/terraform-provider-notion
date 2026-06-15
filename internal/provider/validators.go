@@ -253,3 +253,41 @@ func (v markdownInsertPositionValidator) ValidateString(_ context.Context, req v
 func MarkdownInsertPositionValidator() validator.String {
 	return markdownInsertPositionValidator{}
 }
+
+// Valid Notion view types per the 2026-03-19 Views API launch.
+var validViewTypes = []string{
+	"table", "board", "list", "calendar", "timeline",
+	"gallery", "form", "chart", "map", "dashboard",
+}
+
+type viewTypeValidator struct{}
+
+func (v viewTypeValidator) Description(_ context.Context) string {
+	return fmt.Sprintf("value must be one of: %s", strings.Join(validViewTypes, ", "))
+}
+
+func (v viewTypeValidator) MarkdownDescription(ctx context.Context) string {
+	return v.Description(ctx)
+}
+
+func (v viewTypeValidator) ValidateString(_ context.Context, req validator.StringRequest, resp *validator.StringResponse) {
+	if req.ConfigValue.IsNull() || req.ConfigValue.IsUnknown() {
+		return
+	}
+	val := req.ConfigValue.ValueString()
+	for _, t := range validViewTypes {
+		if val == t {
+			return
+		}
+	}
+	resp.Diagnostics.AddAttributeError(
+		req.Path,
+		"Invalid View Type",
+		fmt.Sprintf("Expected one of: %s, got: %s", strings.Join(validViewTypes, ", "), val),
+	)
+}
+
+// ViewTypeValidator returns a validator for the notion_view type attribute.
+func ViewTypeValidator() validator.String {
+	return viewTypeValidator{}
+}
