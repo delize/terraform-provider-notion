@@ -53,6 +53,7 @@ provider "notion" {
 ### Database Property Resources
 - `notion_database_property_select` - Select property with options
 - `notion_database_property_multi_select` - Multi-select property with options
+- `notion_database_property_status` - Status property with options (writable as of 2026-03-19)
 - `notion_database_property_number` - Number property with format
 - `notion_database_property_relation` - Relation property linking databases
 - `notion_database_property_rollup` - Rollup property for aggregations

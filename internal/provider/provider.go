@@ -84,6 +84,7 @@ func (p *NotionProvider) Resources(_ context.Context) []func() resource.Resource
 		NewDatabaseEntryResource,
 		NewDatabasePropertySelectResource,
 		NewDatabasePropertyMultiSelectResource,
+		NewDatabasePropertyStatusResource,
 		NewDatabasePropertyNumberResource,
 		NewDatabasePropertyRelationResource,
 		NewDatabasePropertyRollupResource,
