@@ -120,3 +120,56 @@ data "notion_page_markdown" "test" {
 }
 `, parentPageID)
 }
+
+// TestAccPageMarkdownInsert exercises the 2026-05-15 insert_content.position
+// path through the notion_page.markdown_insert nested attribute. Two steps:
+//   1. Create the page with initial markdown + an insert at "end".
+//   2. Change the insert content + flip to "start"; verify it re-applies (each
+//      change is a trigger, not declarative — both inserts will be on the page).
+//
+// We can't easily verify the actual page body without round-tripping through
+// the markdown data source, but Notion normalizes markdown so a strict equality
+// check would be brittle. Smoke-test is: the apply succeeds and state holds
+// the values we set.
+func TestAccPageMarkdownInsert(t *testing.T) {
+	parentPageID := os.Getenv("NOTION_TEST_PARENT_PAGE_ID")
+	if parentPageID == "" {
+		t.Skip("NOTION_TEST_PARENT_PAGE_ID not set")
+	}
+
+	resource.Test(t, resource.TestCase{
+		ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
+		Steps: []resource.TestStep{
+			{
+				Config: testAccPageMarkdownInsertConfig(parentPageID, "## Initial", "Appended at end.", "end"),
+				Check: resource.ComposeAggregateTestCheckFunc(
+					resource.TestCheckResourceAttrSet("notion_page.insert_test", "id"),
+					resource.TestCheckResourceAttr("notion_page.insert_test", "markdown_insert.content", "Appended at end."),
+					resource.TestCheckResourceAttr("notion_page.insert_test", "markdown_insert.position", "end"),
+				),
+			},
+			{
+				Config: testAccPageMarkdownInsertConfig(parentPageID, "## Initial", "Prepended now.", "start"),
+				Check: resource.ComposeAggregateTestCheckFunc(
+					resource.TestCheckResourceAttr("notion_page.insert_test", "markdown_insert.content", "Prepended now."),
+					resource.TestCheckResourceAttr("notion_page.insert_test", "markdown_insert.position", "start"),
+				),
+			},
+		},
+	})
+}
+
+func testAccPageMarkdownInsertConfig(parentPageID, body, insertContent, position string) string {
+	return fmt.Sprintf(`
+resource "notion_page" "insert_test" {
+  parent_page_id = %q
+  title          = "Markdown Insert Test"
+  markdown       = %q
+
+  markdown_insert = {
+    content  = %q
+    position = %q
+  }
+}
+`, parentPageID, body, insertContent, position)
+}
