@@ -69,7 +69,14 @@ func (p *NotionProvider) Configure(ctx context.Context, req provider.ConfigureRe
 		return
 	}
 
-	client := notionapi.NewClient(notionapi.Token(token))
+	// Wire the SDK with a retry-capable http.Client so transient 5xx /
+	// HTML-from-edge responses don't bubble up as the cryptic
+	// "invalid character '<' looking for beginning of value" decode
+	// error. See retry_transport.go for the full policy.
+	client := notionapi.NewClient(
+		notionapi.Token(token),
+		notionapi.WithHTTPClient(newRetryHTTPClient()),
+	)
 	registerClientToken(client, token)
 
 	resp.ResourceData = client
