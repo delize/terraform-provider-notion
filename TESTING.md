@@ -44,7 +44,7 @@ Optional, gates specific tests:
 
 | Feature | Test | Notes |
 |---|---|---|
-| `notion_meeting_notes` data source | `TestAccMeetingNotesDataSource[_WithLimit]` | Tolerates an empty workspace — only asserts `raw_json` set. |
+| `notion_meeting_notes` data source | `TestAccMeetingNotesDataSource[_WithLimit]` | Tolerates an empty workspace — only asserts `raw_json` set. Probes the endpoint first and skips if the workspace plan doesn't include AI meeting notes (Notion returns 400 `validation_error` in that case — it's a plan gate, not a provider bug). |
 | `notion_page` `markdown_insert` | `TestAccPageMarkdownInsert` | State-only check; can't compare page body byte-for-byte because Notion normalizes markdown. |
 | `notion_page` move | `TestAccPageMove` | Two steps flip `parent_page_id`; asserts the resource address stays the same (no recreate). |
 | `notion_page` template | `TestAccPageWithTemplate` | Smoke test — Notion applies the template asynchronously so we only assert state. |
@@ -61,6 +61,7 @@ Optional, gates specific tests:
 | `heading_4` / `tabs` / `tab` block builder error path | Intentional error case for SDK-gap block types — exercising it would just assert the error message, which is fragile and low-value. |
 | Bot IDs in people properties / user mentions (2026-06-10) | The provider doesn't currently write people-property values or rich-text mentions; this changelog item is a docs note. |
 | OAuth fresh token pair (2026-06-08) | OAuth flow happens entirely outside this provider; nothing to test. |
+| AI meeting notes data source on plan-gated workspaces | The endpoint returns 400 `validation_error` when the workspace's plan doesn't include AI meeting notes. The tests probe and skip in that case rather than failing — a real user with a non-AI workspace using the data source still surfaces the error correctly. |
 
 ## Risk profile by test gate
 
