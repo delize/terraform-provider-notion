@@ -36,7 +36,9 @@ resource "notion_page" "with_appended_note" {
 
 ### Required
 
-- `parent_page_id` (String) The ID of the parent page. Changing this forces a new resource.
+- `parent_page_id` (String) The ID of the parent page. Changing this on an
+  existing resource issues a `POST /v1/pages/{id}/move` (2026-01-15 endpoint)
+  rather than recreating the resource.
 - `title` (String) The title of the page.
 
 ### Optional
@@ -44,7 +46,13 @@ resource "notion_page" "with_appended_note" {
 - `icon` (String) Emoji icon for the page.
 - `markdown` (String) Page content as enhanced markdown. Full-rewrite semantics
   (`replace_content`). Mutually exclusive with managing content via
-  `notion_block` resources.
+  `notion_block` resources. Mutually exclusive with `template_id`.
+- `template_id` (String) Notion template page ID to apply at creation
+  (2026-01-15 API addition). The template is applied asynchronously, so the
+  page is initially returned blank. Changing this forces a new resource.
+- `template_timezone` (String) Optional IANA timezone (e.g.
+  `America/New_York`) used when resolving template variables. Only meaningful
+  when `template_id` is set. Changing it forces a new resource.
 - `markdown_insert` (Object) Append or prepend markdown to the page without
   rewriting the existing content (uses the 2026-05-15 `insert_content.position`
   endpoint). Each change to `content` or `position` triggers another insert —

@@ -27,13 +27,15 @@ type PageResource struct {
 }
 
 type PageResourceModel struct {
-	ID             types.String `tfsdk:"id"`
-	ParentPageID   types.String `tfsdk:"parent_page_id"`
-	Title          types.String `tfsdk:"title"`
-	URL            types.String `tfsdk:"url"`
-	Icon           types.String `tfsdk:"icon"`
-	Markdown       types.String `tfsdk:"markdown"`
+	ID             types.String         `tfsdk:"id"`
+	ParentPageID   types.String         `tfsdk:"parent_page_id"`
+	Title          types.String         `tfsdk:"title"`
+	URL            types.String         `tfsdk:"url"`
+	Icon           types.String         `tfsdk:"icon"`
+	Markdown       types.String         `tfsdk:"markdown"`
 	MarkdownInsert *MarkdownInsertModel `tfsdk:"markdown_insert"`
+	TemplateID     types.String         `tfsdk:"template_id"`
+	TemplateTimezone types.String       `tfsdk:"template_timezone"`
 }
 
 // MarkdownInsertModel represents a one-shot markdown insertion at the start or
@@ -65,11 +67,9 @@ func (r *PageResource) Schema(_ context.Context, _ resource.SchemaRequest, resp 
 				},
 			},
 			"parent_page_id": schema.StringAttribute{
-				Description: "The ID of the parent page.",
-				Required:    true,
-				PlanModifiers: []planmodifier.String{
-					stringplanmodifier.RequiresReplace(),
-				},
+				Description: "The ID of the parent page. Changes are applied via the 2026-01-15 " +
+					"`POST /v1/pages/{id}/move` endpoint rather than recreating the resource.",
+				Required: true,
 			},
 			"title": schema.StringAttribute{
 				Description: "The title of the page.",
@@ -92,6 +92,23 @@ func (r *PageResource) Schema(_ context.Context, _ resource.SchemaRequest, resp 
 				Description: "Page content as enhanced markdown. Mutually exclusive with managing content via notion_block resources. " +
 					"Note: Notion may normalize the markdown content, so the stored value may differ slightly from what was submitted.",
 				Optional: true,
+			},
+			"template_id": schema.StringAttribute{
+				Description: "Optional Notion template page ID to apply at creation (2026-01-15 API addition). " +
+					"Once set, the template is applied asynchronously by Notion; the page is initially returned blank. " +
+					"Changing this forces a new resource since templates are a creation-time concept.",
+				Optional: true,
+				PlanModifiers: []planmodifier.String{
+					stringplanmodifier.RequiresReplace(),
+				},
+			},
+			"template_timezone": schema.StringAttribute{
+				Description: "Optional IANA timezone (e.g. `America/New_York`) used when resolving template " +
+					"variables. Only meaningful when `template_id` is set. Changing it forces a new resource.",
+				Optional: true,
+				PlanModifiers: []planmodifier.String{
+					stringplanmodifier.RequiresReplace(),
+				},
 			},
 			"markdown_insert": schema.SingleNestedAttribute{
 				Description: "Append or prepend markdown to the page without rewriting the existing content. " +
@@ -137,11 +154,65 @@ func (r *PageResource) Create(ctx context.Context, req resource.CreateRequest, r
 		return
 	}
 
-	if !plan.Markdown.IsNull() && !plan.Markdown.IsUnknown() {
+	hasTemplate := !plan.TemplateID.IsNull() || !plan.TemplateTimezone.IsNull()
+	hasMarkdown := !plan.Markdown.IsNull() && !plan.Markdown.IsUnknown()
+
+	switch {
+	case hasTemplate && hasMarkdown:
+		resp.Diagnostics.AddError(
+			"template and markdown are mutually exclusive at create time",
+			"Notion disallows the children parameter (and by extension the markdown body) when a "+
+				"template is being applied. Use markdown_insert after create if you need to add content "+
+				"to a template-instantiated page.",
+		)
+		return
+	case hasTemplate:
+		r.createWithTemplate(ctx, &plan, resp)
+	case hasMarkdown:
 		r.createWithMarkdown(ctx, &plan, resp)
-	} else {
+	default:
 		r.createWithoutMarkdown(ctx, &plan, resp)
 	}
+}
+
+func (r *PageResource) createWithTemplate(ctx context.Context, plan *PageResourceModel, resp *resource.CreateResponse) {
+	token, err := tokenForClient(r.client)
+	if err != nil {
+		resp.Diagnostics.AddError("Error creating page with template", err.Error())
+		return
+	}
+
+	pageID, pageURL, err := createPageWithTemplate(
+		ctx,
+		token,
+		plan.ParentPageID.ValueString(),
+		plan.Title.ValueString(),
+		plan.TemplateID.ValueString(),
+		plan.TemplateTimezone.ValueString(),
+	)
+	if err != nil {
+		resp.Diagnostics.AddError("Error creating page with template", err.Error())
+		return
+	}
+
+	plan.ID = types.StringValue(normalizeID(pageID))
+	plan.URL = types.StringValue(pageURL)
+
+	// Notion returns the page blank initially and applies the template
+	// asynchronously, so we can't trust the response for icon/title round-trip.
+	// Keep plan values in state.
+	if plan.Icon.IsNull() {
+		plan.Icon = types.StringValue("")
+	}
+
+	if diags := r.applyMarkdownInsert(ctx, plan); diags != nil {
+		resp.Diagnostics.Append(diags...)
+		if resp.Diagnostics.HasError() {
+			return
+		}
+	}
+
+	resp.Diagnostics.Append(resp.State.Set(ctx, plan)...)
 }
 
 func (r *PageResource) createWithMarkdown(ctx context.Context, plan *PageResourceModel, resp *resource.CreateResponse) {
@@ -259,6 +330,20 @@ func (r *PageResource) Read(ctx context.Context, req resource.ReadRequest, resp 
 
 	if page.Parent.Type == notionapi.ParentTypePageID {
 		state.ParentPageID = types.StringValue(normalizeID(string(page.Parent.PageID)))
+	} else {
+		// 2026-05-11: pages can now be parented by an agent ({"type": "agent_id"}).
+		// The SDK is pinned to an older Notion-Version and doesn't model that
+		// type, so anything other than page_id falls through here. Surface a
+		// warning so the user notices the parent moved out from under
+		// Terraform instead of silently keeping the old parent_page_id in state.
+		resp.Diagnostics.AddWarning(
+			"Page parent type changed",
+			fmt.Sprintf("Page %s now has parent type %q (Terraform-managed pages expect page_id). "+
+				"State retains the previously known parent_page_id; you may need to recreate this "+
+				"resource or reparent the page in Notion to keep state and reality in sync. "+
+				"agent_id parents (2026-05-11) are not yet manageable through this provider.",
+				state.ID.ValueString(), page.Parent.Type),
+		)
 	}
 
 	if titleProp, ok := page.Properties["title"]; ok {
@@ -284,6 +369,27 @@ func (r *PageResource) Update(ctx context.Context, req resource.UpdateRequest, r
 	resp.Diagnostics.Append(req.Plan.Get(ctx, &plan)...)
 	if resp.Diagnostics.HasError() {
 		return
+	}
+
+	var state PageResourceModel
+	resp.Diagnostics.Append(req.State.Get(ctx, &state)...)
+	if resp.Diagnostics.HasError() {
+		return
+	}
+
+	// If the parent_page_id changed, move the page first (2026-01-15 move endpoint).
+	// Done before the title/icon Update so the rest of the update lands on the
+	// page already at its new location.
+	if plan.ParentPageID.ValueString() != state.ParentPageID.ValueString() {
+		token, err := tokenForClient(r.client)
+		if err != nil {
+			resp.Diagnostics.AddError("Error moving page", err.Error())
+			return
+		}
+		if err := movePage(ctx, token, plan.ID.ValueString(), plan.ParentPageID.ValueString()); err != nil {
+			resp.Diagnostics.AddError("Error moving page", err.Error())
+			return
+		}
 	}
 
 	// Update page properties (title, icon)
