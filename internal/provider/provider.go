@@ -110,5 +110,6 @@ func (p *NotionProvider) DataSources(_ context.Context) []func() datasource.Data
 		NewDatabaseEntriesDataSource,
 		NewSearchDataSource,
 		NewBlocksDataSource,
+		NewMeetingNotesDataSource,
 	}
 }
