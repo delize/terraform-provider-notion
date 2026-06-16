@@ -91,6 +91,7 @@ func (p *NotionProvider) Resources(_ context.Context) []func() resource.Resource
 		NewDatabaseEntryResource,
 		NewDatabasePropertySelectResource,
 		NewDatabasePropertyMultiSelectResource,
+		NewDatabasePropertyStatusResource,
 		NewDatabasePropertyNumberResource,
 		NewDatabasePropertyRelationResource,
 		NewDatabasePropertyRollupResource,
@@ -104,6 +105,7 @@ func (p *NotionProvider) Resources(_ context.Context) []func() resource.Resource
 		newDatabasePropertyBasicResource("created_by", notionapi.PropertyConfigCreatedBy),
 		newDatabasePropertyBasicResource("last_edited_time", notionapi.PropertyConfigLastEditedTime),
 		newDatabasePropertyBasicResource("last_edited_by", notionapi.PropertyConfigLastEditedBy),
+		NewViewResource,
 	}
 }
 
@@ -117,5 +119,7 @@ func (p *NotionProvider) DataSources(_ context.Context) []func() datasource.Data
 		NewDatabaseEntriesDataSource,
 		NewSearchDataSource,
 		NewBlocksDataSource,
+		NewMeetingNotesDataSource,
+		NewViewQueryDataSource,
 	}
 }

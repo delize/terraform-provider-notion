@@ -201,3 +201,37 @@ func (mc *markdownClient) ReplacePageMarkdown(ctx context.Context, pageID, markd
 
 	return &result, nil
 }
+
+// InsertPageMarkdown prepends or appends markdown to a page without rewriting
+// the existing content. position must be "start" or "end". Backs the
+// 2026-05-15 insert_content.position addition to PATCH /v1/pages/{id}/markdown.
+func (mc *markdownClient) InsertPageMarkdown(ctx context.Context, pageID, markdown, position string) (*PageMarkdownResponse, error) {
+	if position != "start" && position != "end" {
+		return nil, fmt.Errorf("InsertPageMarkdown: position must be \"start\" or \"end\", got %q", position)
+	}
+
+	url := fmt.Sprintf("https://api.notion.com/v1/pages/%s/markdown", pageID)
+	body := map[string]interface{}{
+		"type": "insert_content",
+		"insert_content": map[string]interface{}{
+			"markdown": markdown,
+			"position": position,
+		},
+	}
+
+	respBody, err := mc.doRequest(ctx, http.MethodPatch, url, body)
+	if err != nil {
+		return nil, err
+	}
+
+	var result PageMarkdownResponse
+	if err := json.Unmarshal(respBody, &result); err != nil {
+		return nil, fmt.Errorf("failed to parse markdown insert response: %w", err)
+	}
+
+	if result.Truncated {
+		return nil, fmt.Errorf("page content is truncated after insert; this provider does not support truncated pages")
+	}
+
+	return &result, nil
+}
