@@ -48,7 +48,7 @@ func TestAccSearchDataSource(t *testing.T) {
 	parentPageID := makeIsolatedParentPage(t, client, "search")
 	expectedTitle := fmt.Sprintf("tf-acc-test-search-%s", testRunSuffix())
 
-	waitForSearchIndex(t, client, expectedTitle, parentPageID, 60*time.Second)
+	waitForSearchIndex(t, client, expectedTitle, parentPageID, 120*time.Second)
 
 	resource.Test(t, resource.TestCase{
 		ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
@@ -70,13 +70,19 @@ data "notion_search" "by_title" {
 }
 
 // waitForSearchIndex polls /v1/search until the given page ID appears in the
-// results for the given query, or fails the test on timeout. Notion's search
-// index is eventually-consistent — newly-created pages typically appear
-// within 5–15 seconds.
+// results for the given query on TWO consecutive polls (separated by the
+// poll interval), or fails the test on timeout. Notion's search index is
+// eventually-consistent and entries can be returned briefly then evicted as
+// the index settles, so a single positive hit isn't enough — we previously
+// hit flakes where the indexer-side wait passed but the immediate follow-up
+// query from the TF data source missed. Requiring two consecutive hits
+// narrows that race window without restructuring the test.
 func waitForSearchIndex(t *testing.T, client *notionapi.Client, query, expectedID string, timeout time.Duration) {
 	t.Helper()
 	deadline := time.Now().Add(timeout)
 	ctx := context.Background()
+	consecutiveHits := 0
+	const requiredHits = 2
 	for {
 		resp, err := client.Search.Do(ctx, &notionapi.SearchRequest{
 			Query: query,
@@ -89,13 +95,23 @@ func waitForSearchIndex(t *testing.T, client *notionapi.Client, query, expectedI
 		if err != nil {
 			t.Fatalf("waitForSearchIndex: search failed: %v", err)
 		}
+		found := false
 		for _, obj := range resp.Results {
 			if p, ok := obj.(*notionapi.Page); ok && normalizeID(string(p.ID)) == expectedID {
-				return
+				found = true
+				break
 			}
 		}
+		if found {
+			consecutiveHits++
+			if consecutiveHits >= requiredHits {
+				return
+			}
+		} else {
+			consecutiveHits = 0
+		}
 		if time.Now().After(deadline) {
-			t.Fatalf("waitForSearchIndex: page %s not indexed within %s for query %q", expectedID, timeout, query)
+			t.Fatalf("waitForSearchIndex: page %s not stably indexed (need %d consecutive hits) within %s for query %q", expectedID, requiredHits, timeout, query)
 		}
 		time.Sleep(3 * time.Second)
 	}
