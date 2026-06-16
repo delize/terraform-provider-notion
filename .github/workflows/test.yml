@@ -41,7 +41,7 @@ jobs:
       # and concurrent runs trip rate limiting / interference.
       max-parallel: 1
       matrix:
-        terraform: ['1.13.*', '1.14.*']
+        terraform: ['1.14.*', '1.15.*']
     env:
       TF_ACC: "1"
       NOTION_TOKEN: ${{ secrets.NOTION_TOKEN }}
@@ -72,7 +72,7 @@ jobs:
       # and concurrent runs trip rate limiting / interference.
       max-parallel: 1
       matrix:
-        terraform: ['1.13.*', '1.14.*']
+        terraform: ['1.14.*', '1.15.*']
     env:
       TF_ACC: "1"
       NOTION_TOKEN: ${{ secrets.NOTION_TOKEN }}
