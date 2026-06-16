@@ -138,11 +138,12 @@ func RollupFunctionValidator() validator.String {
 
 // Valid block types for notion_block resource.
 var validBlockTypes = []string{
-	"paragraph", "heading_1", "heading_2", "heading_3",
+	"paragraph", "heading_1", "heading_2", "heading_3", "heading_4",
 	"bulleted_list_item", "numbered_list_item", "to_do", "toggle",
 	"quote", "callout", "code", "equation",
 	"divider", "table_of_contents", "bookmark", "embed", "image",
 	"synced_block", "column_list", "column",
+	"tabs", "tab",
 }
 
 // Valid block colors (10 foreground + 10 background).
@@ -251,4 +252,42 @@ func (v markdownInsertPositionValidator) ValidateString(_ context.Context, req v
 // MarkdownInsertPositionValidator returns a validator for the markdown_insert position field.
 func MarkdownInsertPositionValidator() validator.String {
 	return markdownInsertPositionValidator{}
+}
+
+// Valid Notion view types per the 2026-03-19 Views API launch.
+var validViewTypes = []string{
+	"table", "board", "list", "calendar", "timeline",
+	"gallery", "form", "chart", "map", "dashboard",
+}
+
+type viewTypeValidator struct{}
+
+func (v viewTypeValidator) Description(_ context.Context) string {
+	return fmt.Sprintf("value must be one of: %s", strings.Join(validViewTypes, ", "))
+}
+
+func (v viewTypeValidator) MarkdownDescription(ctx context.Context) string {
+	return v.Description(ctx)
+}
+
+func (v viewTypeValidator) ValidateString(_ context.Context, req validator.StringRequest, resp *validator.StringResponse) {
+	if req.ConfigValue.IsNull() || req.ConfigValue.IsUnknown() {
+		return
+	}
+	val := req.ConfigValue.ValueString()
+	for _, t := range validViewTypes {
+		if val == t {
+			return
+		}
+	}
+	resp.Diagnostics.AddAttributeError(
+		req.Path,
+		"Invalid View Type",
+		fmt.Sprintf("Expected one of: %s, got: %s", strings.Join(validViewTypes, ", "), val),
+	)
+}
+
+// ViewTypeValidator returns a validator for the notion_view type attribute.
+func ViewTypeValidator() validator.String {
+	return viewTypeValidator{}
 }
