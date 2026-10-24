@@ -126,6 +126,7 @@ func (p *NotionProvider) Actions(_ context.Context) []func() action.Action {
 	return []func() action.Action{
 		NewLegalHoldExportAction,
 		NewRevokeUserSessionsAction,
+		NewAdminAgentDeleteAction,
 	}
 }
 
@@ -155,6 +156,8 @@ func (p *NotionProvider) Resources(_ context.Context) []func() resource.Resource
 		NewPermissionGroupResource,
 		NewPermissionGroupMemberResource,
 		NewLegalHoldResource,
+		NewAdminAgentSettingsResource,
+		NewAdminWorkspaceAgentSettingsResource,
 	}
 }
 
@@ -175,5 +178,8 @@ func (p *NotionProvider) DataSources(_ context.Context) []func() datasource.Data
 		NewWorkspacesDataSource,
 		NewLegalHoldsDataSource,
 		NewLegalHoldPagesDataSource,
+		NewAdminAgentsDataSource,
+		NewAdminAgentCreditUsageDataSource,
+		NewAdminAgentsCreditUsageDataSource,
 	}
 }
