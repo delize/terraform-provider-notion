@@ -37,6 +37,7 @@ output "admin_name" {
 
 ### Read-Only
 
+- `email_verified` (Boolean) Whether Notion has verified the user's email address (Notion API 2026-07-15). Null when Notion doesn't return it, which happens under the same capability conditions that hide `person.email`.
 - `id` (String) The ID of the user.
 - `name` (String) The display name of the user.
 - `user_id` (String) The Notion user ID.

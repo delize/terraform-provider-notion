@@ -132,5 +132,7 @@ func (p *NotionProvider) DataSources(_ context.Context) []func() datasource.Data
 		NewBlocksDataSource,
 		NewMeetingNotesDataSource,
 		NewViewQueryDataSource,
+		NewCustomEmojisDataSource,
+		NewDatabaseTemplatesDataSource,
 	}
 }

@@ -17,8 +17,9 @@ type PageMarkdownDataSource struct {
 }
 
 type PageMarkdownDataSourceModel struct {
-	PageID   types.String `tfsdk:"page_id"`
-	Markdown types.String `tfsdk:"markdown"`
+	PageID            types.String `tfsdk:"page_id"`
+	IncludeTranscript types.Bool   `tfsdk:"include_transcript"`
+	Markdown          types.String `tfsdk:"markdown"`
 }
 
 func NewPageMarkdownDataSource() datasource.DataSource {
@@ -36,6 +37,10 @@ func (d *PageMarkdownDataSource) Schema(_ context.Context, _ datasource.SchemaRe
 			"page_id": schema.StringAttribute{
 				Description: "The ID of the page to retrieve markdown for.",
 				Required:    true,
+			},
+			"include_transcript": schema.BoolAttribute{
+				Description: "Include full AI meeting note transcripts in the markdown. Without it, each meeting note renders as a placeholder with its URL. Defaults to false.",
+				Optional:    true,
 			},
 			"markdown": schema.StringAttribute{
 				Description: "The page content rendered as enhanced markdown.",
@@ -65,7 +70,7 @@ func (d *PageMarkdownDataSource) Read(ctx context.Context, req datasource.ReadRe
 		return
 	}
 
-	mdResp, err := d.mdClient.GetPageMarkdown(ctx, config.PageID.ValueString())
+	mdResp, err := d.mdClient.GetPageMarkdownWithTranscript(ctx, config.PageID.ValueString(), config.IncludeTranscript.ValueBool())
 	if err != nil {
 		resp.Diagnostics.AddError("Error reading page markdown", err.Error())
 		return

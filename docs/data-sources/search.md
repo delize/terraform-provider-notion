@@ -23,6 +23,12 @@ data "notion_search" "all_databases" {
   filter_object = "database"
 }
 
+# List pages in the trash
+data "notion_search" "trashed_pages" {
+  filter_object = "page"
+  in_trash      = true
+}
+
 output "roadmap_urls" {
   value = [for r in data.notion_search.roadmaps.results : r.url]
 }
@@ -34,6 +40,7 @@ output "roadmap_urls" {
 
 - `query` (String) Substring to match against page/database titles. Omit to list everything accessible to the integration.
 - `filter_object` (String) Restrict results to either `page` or `database`. Omit to return both.
+- `in_trash` (Boolean) When `true`, list pages and databases in the trash instead of live ones (Notion API 2026-07-15). Works alone or with `query` and `filter_object`. Defaults to `false`.
 
 ### Read-Only
 
