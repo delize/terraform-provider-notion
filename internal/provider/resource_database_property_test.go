@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/hashicorp/terraform-plugin-testing/helper/resource"
+	"github.com/hashicorp/terraform-plugin-testing/terraform"
 )
 
 func TestAccDatabasePropertyRichTextResource(t *testing.T) {
@@ -162,8 +163,52 @@ func TestAccDatabasePropertyStatusResource(t *testing.T) {
 					resource.TestCheckResourceAttr("notion_database_property_status.test", "options.Blocked", "red"),
 				),
 			},
+			// 2026-06-22 option groups. "Blocked" moves to In progress and
+			// "Done" is pinned to Complete. "In progress" changes color in
+			// place (2026-10-09). default_option (2026-10-22) is logged, not
+			// asserted, because Notion doesn't promise one on the legacy
+			// 2022-06-28 response.
+			{
+				Config: testAccDatabasePropertyStatusGroupsConfig(parentPageID),
+				Check: resource.ComposeAggregateTestCheckFunc(
+					resource.TestCheckResourceAttr("notion_database_property_status.test", "options.In progress", "purple"),
+					resource.TestCheckResourceAttr("notion_database_property_status.test", "option_groups.%", "2"),
+					resource.TestCheckResourceAttr("notion_database_property_status.test", "option_groups.Blocked", "In progress"),
+					resource.TestCheckResourceAttr("notion_database_property_status.test", "option_groups.Done", "Complete"),
+					func(s *terraform.State) error {
+						rs := s.RootModule().Resources["notion_database_property_status.test"]
+						t.Logf("status default_option = %q", rs.Primary.Attributes["default_option"])
+						return nil
+					},
+				),
+			},
 		},
 	})
+}
+
+func testAccDatabasePropertyStatusGroupsConfig(parentPageID string) string {
+	return fmt.Sprintf(`
+resource "notion_database" "status_test" {
+  parent             = %q
+  title              = "Status Test DB"
+  title_column_title = "Name"
+}
+
+resource "notion_database_property_status" "test" {
+  database = notion_database.status_test.id
+  name     = "Workflow"
+  options = {
+    "Not started" = "default"
+    "In progress" = "purple"
+    "Blocked"     = "red"
+    "Done"        = "green"
+  }
+  option_groups = {
+    "Blocked" = "In progress"
+    "Done"    = "Complete"
+  }
+}
+`, parentPageID)
 }
 
 func testAccDatabasePropertyStatusConfig(parentPageID, optionsBody string) string {
