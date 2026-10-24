@@ -79,3 +79,11 @@ Tests use `tf-acc-test-*` prefixes for ephemeral pages so they're easy to spot
 in Notion if cleanup fails. Terraform's test framework calls Destroy at the
 end of each `TestCase`, which trashes pages via the `in_trash` field — they
 end up in the workspace trash, not hard-deleted.
+
+## CI and branch protection
+
+`main` is protected by the ruleset in `.github/rulesets/main.json`. Changes land through a pull request and are squash-merged. Force-pushes and branch deletion are blocked. The required checks are `build` and `acceptance-result`. The repository admin role can bypass the rules only when merging a pull request, never for a direct push. Edit the JSON and run `python3 .github/rulesets/apply.py` to change it, since the script updates the ruleset by name.
+
+`acceptance-result` exists so the required checks stay the same when the Terraform matrix changes. It passes only when `build` passed and every acceptance leg passed. On fork PRs it stays red on purpose, because acceptance for forks runs in the separate `Acceptance (fork)` workflow after a maintainer approves the `acceptance` environment. Once that run is green, merge the fork PR with the admin bypass.
+
+The acceptance matrix covers the three newest Terraform minor versions. When a new minor ships, add it and drop the oldest in both `test.yml` and `acceptance-fork.yml`.
