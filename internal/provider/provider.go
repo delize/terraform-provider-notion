@@ -129,6 +129,7 @@ func (p *NotionProvider) Actions(_ context.Context) []func() action.Action {
 		NewAdminAgentDeleteAction,
 		NewMCPConnectionRevokeAction,
 		NewPATRevokeAction,
+		NewWorkspaceExportAction,
 	}
 }
 
@@ -186,5 +187,6 @@ func (p *NotionProvider) DataSources(_ context.Context) []func() datasource.Data
 		NewAdminAgentsCreditUsageDataSource,
 		NewMCPConnectionsDataSource,
 		NewPATsDataSource,
+		NewWorkspaceExportStatusDataSource,
 	}
 }
