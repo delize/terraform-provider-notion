@@ -15,17 +15,18 @@ import (
 // for it, so when the provider's silent_notifications is on, this
 // RoundTripper adds it to the request body of:
 //
-//   - POST  /v1/pages        (Create a page)
-//   - PATCH /v1/pages/{id}   (Update page)
+//   - POST  /v1/pages                 (Create a page)
+//   - PATCH /v1/pages/{id}            (Update page)
+//   - PATCH /v1/blocks/{id}/children  (Append block children)
 //
-// Those are the two endpoints whose reference documents the parameter.
-// Sub-resources such as /markdown and /move are left alone.
+// Those are the endpoints whose reference documents the parameter. Other
+// writes such as /markdown, /move, and Update a block are left alone.
 type notificationsTransport struct {
 	next http.RoundTripper
 }
 
 func (t *notificationsTransport) RoundTrip(req *http.Request) (*http.Response, error) {
-	if !isPageWrite(req) || req.Body == nil {
+	if !isNotifyingWrite(req) || req.Body == nil {
 		return t.next.RoundTrip(req)
 	}
 
@@ -45,16 +46,22 @@ func (t *notificationsTransport) RoundTrip(req *http.Request) (*http.Response, e
 	return t.next.RoundTrip(out)
 }
 
-func isPageWrite(req *http.Request) bool {
+func isNotifyingWrite(req *http.Request) bool {
 	if req.URL == nil {
 		return false
 	}
 	parts := strings.Split(strings.Trim(req.URL.Path, "/"), "/")
+	if len(parts) < 2 || parts[0] != "v1" {
+		return false
+	}
 	switch req.Method {
 	case http.MethodPost:
-		return len(parts) == 2 && parts[0] == "v1" && parts[1] == "pages"
+		return len(parts) == 2 && parts[1] == "pages"
 	case http.MethodPatch:
-		return len(parts) == 3 && parts[0] == "v1" && parts[1] == "pages" && parts[2] != ""
+		if len(parts) == 3 && parts[1] == "pages" && parts[2] != "" {
+			return true
+		}
+		return len(parts) == 4 && parts[1] == "blocks" && parts[2] != "" && parts[3] == "children"
 	}
 	return false
 }

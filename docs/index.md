@@ -26,7 +26,7 @@ The token can be provided in two ways:
 
 ## Silent writes
 
-Set `silent_notifications = true` to create and update pages without Notion notifications (Notion API 2026-10-08). That skips page update notifications, @mentions, and notifications for people added to a Person property. Database automations, reminders, and connection webhooks still run. This is useful when Terraform manages pages that people are mentioned or assigned in, since every apply would otherwise notify them.
+Set `silent_notifications = true` to create and update pages, and append blocks, without Notion notifications (Notion API 2026-10-08). That skips page update notifications, @mentions, and notifications for people added to a Person property. Database automations, reminders, and connection webhooks still run. This is useful when Terraform manages pages that people are mentioned or assigned in, since every apply would otherwise notify them.
 
 ```terraform
 provider "notion" {

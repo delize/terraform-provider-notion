@@ -58,13 +58,17 @@ func TestNotificationsTransport_InjectsOnPageWrites(t *testing.T) {
 	do(http.MethodPatch, "/v1/pages/abc/markdown", `{"type":"insert_content"}`)
 	do(http.MethodPost, "/v1/pages/abc/move", `{"parent":{"page_id":"q"}}`)
 	do(http.MethodPatch, "/v1/databases/abc", `{"properties":{}}`)
+	do(http.MethodPatch, "/v1/blocks/abc/children", `{"children":[]}`)
+	do(http.MethodPatch, "/v1/blocks/abc", `{"paragraph":{}}`)
 
 	cases := map[string]string{
-		"POST /v1/pages":               "silent",
-		"PATCH /v1/pages/abc":          "silent",
-		"PATCH /v1/pages/abc/markdown": "",
-		"POST /v1/pages/abc/move":      "",
-		"PATCH /v1/databases/abc":      "",
+		"POST /v1/pages":                "silent",
+		"PATCH /v1/pages/abc":           "silent",
+		"PATCH /v1/pages/abc/markdown":  "",
+		"POST /v1/pages/abc/move":       "",
+		"PATCH /v1/databases/abc":       "",
+		"PATCH /v1/blocks/abc/children": "silent",
+		"PATCH /v1/blocks/abc":          "",
 	}
 	for key, want := range cases {
 		body, ok := seen[key]
