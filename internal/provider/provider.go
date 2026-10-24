@@ -117,6 +117,7 @@ func (p *NotionProvider) Resources(_ context.Context) []func() resource.Resource
 		newDatabasePropertyBasicResource("last_edited_time", notionapi.PropertyConfigLastEditedTime),
 		newDatabasePropertyBasicResource("last_edited_by", notionapi.PropertyConfigLastEditedBy),
 		NewViewResource,
+		NewAgentSettingsResource,
 	}
 }
 
