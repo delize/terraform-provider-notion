@@ -1,7 +1,9 @@
 package provider
 
 import (
+	"bytes"
 	"crypto/rand"
+	"encoding/json"
 	"encoding/binary"
 	"fmt"
 	"io"
@@ -44,6 +46,12 @@ import (
 //     latency profile.
 //   - 429. The jomei SDK already handles these with Retry-After semantics;
 //     adding a second retry loop here would interact badly with the SDK's.
+//   - A JSON 504 with code "gateway_timeout" on POST or PATCH. Since
+//     2026-09-24 Notion returns this (instead of a 500) when a markdown
+//     write timed out, and says to check whether the write saved before
+//     retrying. Replaying a non-idempotent write such as insert_content
+//     could duplicate content, so the response goes back to the caller.
+//     Edge HTML 504s are still retried, since those never reached the API.
 //   - Requests whose body cannot be replayed (no GetBody set). For
 //     idempotent GET/HEAD/DELETE there's no body to replay; for
 //     POST/PATCH the SDK constructs requests with bytes.Buffer which
@@ -53,7 +61,9 @@ import (
 // Backoff
 //
 // Exponential with jitter, capped at maxDelay. If the response carries a
-// Retry-After header, we honour it (capped to maxDelay).
+// Retry-After header, we honour it (capped to maxDelay). maxDelay is 60s
+// because Notion's per-connection limit uses a fixed 60-second window and
+// caps Retry-After at 60 (2026-09-09).
 type retryTransport struct {
 	next       http.RoundTripper // underlying transport; defaults to http.DefaultTransport
 	maxRetries int               // total attempts = maxRetries + 1
@@ -70,7 +80,7 @@ func newRetryHTTPClient() *http.Client {
 			next:       http.DefaultTransport,
 			maxRetries: 5,
 			baseDelay:  500 * time.Millisecond,
-			maxDelay:   30 * time.Second,
+			maxDelay:   60 * time.Second,
 		},
 		// Generous per-attempt timeout. The retry loop is bounded by
 		// maxRetries × maxDelay anyway, so this just keeps a single
@@ -129,7 +139,7 @@ func (rt *retryTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 			continue
 		}
 
-		if !shouldRetryResponse(resp) {
+		if isWriteGatewayTimeout(req, resp) || !shouldRetryResponse(resp) {
 			return resp, nil
 		}
 
@@ -164,6 +174,38 @@ func shouldRetryResponse(resp *http.Response) bool {
 	}
 
 	return false
+}
+
+// isWriteGatewayTimeout reports whether resp is Notion's JSON
+// "gateway_timeout" 504 for a POST or PATCH. The write may have been saved,
+// so it must not be blindly replayed (see the type comment). The body is
+// buffered and restored so the caller can still read the error.
+func isWriteGatewayTimeout(req *http.Request, resp *http.Response) bool {
+	if resp.StatusCode != http.StatusGatewayTimeout {
+		return false
+	}
+	if req.Method != http.MethodPost && req.Method != http.MethodPatch {
+		return false
+	}
+	if !strings.HasPrefix(strings.ToLower(resp.Header.Get("Content-Type")), "application/json") {
+		return false
+	}
+	if resp.Body == nil {
+		return false
+	}
+	body, err := io.ReadAll(io.LimitReader(resp.Body, 1<<16))
+	_ = resp.Body.Close()
+	resp.Body = io.NopCloser(bytes.NewReader(body))
+	if err != nil {
+		return false
+	}
+	var apiErr struct {
+		Code string `json:"code"`
+	}
+	if json.Unmarshal(body, &apiErr) != nil {
+		return false
+	}
+	return apiErr.Code == "gateway_timeout"
 }
 
 // computeDelay returns the backoff for a given retry attempt. If the

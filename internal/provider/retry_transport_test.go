@@ -2,6 +2,7 @@ package provider
 
 import (
 	"context"
+	"io"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -393,3 +394,90 @@ func TestRetryTransport_RetriesOnNetworkError(t *testing.T) {
 type roundTripperFunc func(*http.Request) (*http.Response, error)
 
 func (f roundTripperFunc) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }
+
+// TestRetryTransport_DoesNotReplayWriteGatewayTimeout covers the 2026-09-24
+// change: a JSON gateway_timeout on a write may already have been saved, so
+// the transport must hand it back instead of replaying the request.
+func TestRetryTransport_DoesNotReplayWriteGatewayTimeout(t *testing.T) {
+	const errBody = `{"object":"error","status":504,"code":"gateway_timeout","message":"timed out"}`
+	var attempts atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		attempts.Add(1)
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusGatewayTimeout)
+		_, _ = w.Write([]byte(errBody))
+	}))
+	t.Cleanup(srv.Close)
+
+	client := &http.Client{Transport: newTestTransport()}
+	resp, err := client.Post(srv.URL, "application/json", strings.NewReader(`{"type":"insert_content"}`))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if got := attempts.Load(); got != 1 {
+		t.Errorf("attempts: got %d, want 1 (write must not be replayed)", got)
+	}
+	if resp.StatusCode != http.StatusGatewayTimeout {
+		t.Errorf("status: got %d, want 504", resp.StatusCode)
+	}
+	b, _ := io.ReadAll(resp.Body)
+	if string(b) != errBody {
+		t.Errorf("body not restored for caller: got %q", string(b))
+	}
+}
+
+// TestRetryTransport_RetriesGatewayTimeoutOnRead checks that a GET with the
+// same 504 is still retried, since reads are safe to replay.
+func TestRetryTransport_RetriesGatewayTimeoutOnRead(t *testing.T) {
+	var attempts atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if attempts.Add(1) < 2 {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusGatewayTimeout)
+			_, _ = w.Write([]byte(`{"object":"error","status":504,"code":"gateway_timeout"}`))
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"ok":true}`))
+	}))
+	t.Cleanup(srv.Close)
+
+	client := &http.Client{Transport: newTestTransport()}
+	resp, err := client.Get(srv.URL)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK || attempts.Load() != 2 {
+		t.Errorf("got status %d after %d attempts, want 200 after 2", resp.StatusCode, attempts.Load())
+	}
+}
+
+// TestRetryTransport_RetriesEdgeHTML504OnWrite keeps the original behavior
+// for Cloudflare HTML 504s on writes: those never reached the API.
+func TestRetryTransport_RetriesEdgeHTML504OnWrite(t *testing.T) {
+	var attempts atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if attempts.Add(1) < 2 {
+			w.Header().Set("Content-Type", "text/html")
+			w.WriteHeader(http.StatusGatewayTimeout)
+			_, _ = w.Write([]byte("<html>504</html>"))
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"ok":true}`))
+	}))
+	t.Cleanup(srv.Close)
+
+	client := &http.Client{Transport: newTestTransport()}
+	resp, err := client.Post(srv.URL, "application/json", strings.NewReader(`{}`))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK || attempts.Load() != 2 {
+		t.Errorf("got status %d after %d attempts, want 200 after 2", resp.StatusCode, attempts.Load())
+	}
+}
