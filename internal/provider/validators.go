@@ -143,7 +143,7 @@ var validBlockTypes = []string{
 	"quote", "callout", "code", "equation",
 	"divider", "table_of_contents", "bookmark", "embed", "image",
 	"synced_block", "column_list", "column",
-	"tabs", "tab",
+	"tab",
 }
 
 // Valid block colors (10 foreground + 10 background).
