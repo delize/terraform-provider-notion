@@ -1,0 +1,52 @@
+name: Acceptance (fork)
+
+# Fork PR acceptance. pull_request_target runs in the base-branch context
+# with secret access. The `acceptance` environment's required-reviewer rule
+# holds the secrets until a maintainer approves, and the job then checks out
+# the PR head so the actual PR code is exercised.
+#
+# This lives apart from test.yml so the pull_request_target run doesn't post
+# skipped duplicates of test.yml's checks on the PR commit (see test.yml).
+on:
+  pull_request_target:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  acceptance-fork:
+    if: github.event.pull_request.head.repo.full_name != github.repository
+    runs-on: ubuntu-latest
+    environment: acceptance
+    strategy:
+      fail-fast: false
+      max-parallel: 1
+      # Keep in sync with test.yml.
+      matrix:
+        terraform: ['1.15.*', '1.16.*', '1.17.*']
+    env:
+      TF_ACC: "1"
+      NOTION_TOKEN: ${{ secrets.NOTION_TOKEN }}
+      NOTION_TEST_PARENT_PAGE_ID: ${{ secrets.NOTION_TEST_PARENT_PAGE_ID }}
+      GITHUB_PR_NUMBER: ${{ github.event.pull_request.number }}
+    steps:
+      # checkout v7 refuses fork code under pull_request_target unless told
+      # otherwise. The environment approval above is what makes this
+      # acceptable, so review the PR diff before approving. Credentials are
+      # not persisted, so PR code can't reuse the token from .git/config.
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          allow-unsafe-pr-checkout: true
+          persist-credentials: false
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+      - uses: hashicorp/setup-terraform@v4
+        with:
+          terraform_version: ${{ matrix.terraform }}
+          terraform_wrapper: false
+      - run: go build ./...
+      - run: go vet ./...
+      - run: go test ./internal/provider/ -v -timeout 120m
