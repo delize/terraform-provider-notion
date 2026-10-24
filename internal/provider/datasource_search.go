@@ -2,7 +2,10 @@ package provider
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
+	"io"
+	"net/http"
 
 	"github.com/hashicorp/terraform-plugin-framework/datasource"
 	"github.com/hashicorp/terraform-plugin-framework/datasource/schema"
@@ -19,6 +22,7 @@ type SearchDataSource struct {
 type SearchDataSourceModel struct {
 	Query        types.String        `tfsdk:"query"`
 	FilterObject types.String        `tfsdk:"filter_object"`
+	InTrash      types.Bool          `tfsdk:"in_trash"`
 	Results      []SearchResultModel `tfsdk:"results"`
 }
 
@@ -50,6 +54,10 @@ func (d *SearchDataSource) Schema(_ context.Context, _ datasource.SchemaRequest,
 			},
 			"filter_object": schema.StringAttribute{
 				Description: `Optionally restrict results to "page" or "database". Omit for both.`,
+				Optional:    true,
+			},
+			"in_trash": schema.BoolAttribute{
+				Description: "When true, list pages and databases in the trash instead of live ones. Combines with query and filter_object. Defaults to false.",
 				Optional:    true,
 			},
 			"results": schema.ListNestedAttribute{
@@ -112,21 +120,16 @@ func (d *SearchDataSource) Read(ctx context.Context, req datasource.ReadRequest,
 		return
 	}
 
-	var cursor notionapi.Cursor
-	for {
-		searchReq := &notionapi.SearchRequest{
-			Query:       config.Query.ValueString(),
-			StartCursor: cursor,
-			PageSize:    100,
-		}
-		if !config.FilterObject.IsNull() && config.FilterObject.ValueString() != "" {
-			searchReq.Filter = notionapi.SearchFilter{
-				Property: "object",
-				Value:    config.FilterObject.ValueString(),
-			}
-		}
+	token, err := tokenForClient(d.client)
+	if err != nil {
+		resp.Diagnostics.AddError("Error searching Notion", err.Error())
+		return
+	}
 
-		page, err := d.client.Search.Do(ctx, searchReq)
+	cursor := ""
+	for {
+		body := buildSearchBody(config.Query.ValueString(), config.FilterObject.ValueString(), config.InTrash.ValueBool(), cursor)
+		page, err := doSearch(ctx, notionAPIBaseURL, token, body)
 		if err != nil {
 			resp.Diagnostics.AddError("Error searching Notion", err.Error())
 			return
@@ -136,10 +139,10 @@ func (d *SearchDataSource) Read(ctx context.Context, req datasource.ReadRequest,
 			config.Results = append(config.Results, searchResultFor(obj))
 		}
 
-		if !page.HasMore {
+		if !page.HasMore || page.NextCursor == "" {
 			break
 		}
-		cursor = page.NextCursor
+		cursor = string(page.NextCursor)
 	}
 
 	if config.Results == nil {
@@ -147,6 +150,58 @@ func (d *SearchDataSource) Read(ctx context.Context, req datasource.ReadRequest,
 	}
 
 	resp.Diagnostics.Append(resp.State.Set(ctx, &config)...)
+}
+
+// buildSearchBody builds a POST /v1/search body. The SDK's SearchFilter has
+// no in_trash field (2026-07-15), so search goes over direct HTTP. in_trash
+// can stand alone or sit next to the object filter.
+func buildSearchBody(query, filterObject string, inTrash bool, cursor string) map[string]interface{} {
+	body := map[string]interface{}{"page_size": 100}
+	if query != "" {
+		body["query"] = query
+	}
+	if cursor != "" {
+		body["start_cursor"] = cursor
+	}
+	filter := map[string]interface{}{}
+	if filterObject != "" {
+		filter["property"] = "object"
+		filter["value"] = filterObject
+	}
+	if inTrash {
+		filter["in_trash"] = true
+	}
+	if len(filter) > 0 {
+		body["filter"] = filter
+	}
+	return body
+}
+
+// doSearch posts one search page on Notion-Version 2022-06-28, where results
+// are pages and databases, and decodes it with the SDK's response type so
+// searchResultFor keeps working unchanged.
+func doSearch(ctx context.Context, baseURL, token string, body map[string]interface{}) (*notionapi.SearchResponse, error) {
+	b, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	resp, err := doNotionRequestWithVersion(ctx, http.MethodPost, baseURL+"/search", token, legacySchemaAPIVersion, b)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	respBody, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, err
+	}
+	if resp.StatusCode >= 400 {
+		return nil, fmt.Errorf("notion API %d on search: %s", resp.StatusCode, string(respBody))
+	}
+	var page notionapi.SearchResponse
+	if err := json.Unmarshal(respBody, &page); err != nil {
+		return nil, fmt.Errorf("failed to parse search response: %w", err)
+	}
+	return &page, nil
 }
 
 // searchResultFor converts a Notion search result (Page or Database) into the
