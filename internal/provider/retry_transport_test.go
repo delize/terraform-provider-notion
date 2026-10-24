@@ -2,8 +2,8 @@ package provider
 
 import (
 	"context"
-	"io"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
