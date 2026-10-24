@@ -127,6 +127,7 @@ func (p *NotionProvider) Actions(_ context.Context) []func() action.Action {
 		NewLegalHoldExportAction,
 		NewRevokeUserSessionsAction,
 		NewAdminAgentDeleteAction,
+		NewMCPConnectionRevokeAction,
 	}
 }
 
@@ -158,6 +159,7 @@ func (p *NotionProvider) Resources(_ context.Context) []func() resource.Resource
 		NewLegalHoldResource,
 		NewAdminAgentSettingsResource,
 		NewAdminWorkspaceAgentSettingsResource,
+		NewMCPEnterpriseAccessResource,
 	}
 }
 
@@ -181,5 +183,6 @@ func (p *NotionProvider) DataSources(_ context.Context) []func() datasource.Data
 		NewAdminAgentsDataSource,
 		NewAdminAgentCreditUsageDataSource,
 		NewAdminAgentsCreditUsageDataSource,
+		NewMCPConnectionsDataSource,
 	}
 }
