@@ -89,7 +89,8 @@ func (mc *markdownClient) CreatePageWithMarkdown(ctx context.Context, parentPage
 }
 
 // CreatePageWithMarkdownAndTitle creates a page with both a title property and markdown content.
-func (mc *markdownClient) CreatePageWithMarkdownAndTitle(ctx context.Context, parentPageID, title, markdown string) (string, string, error) {
+// position is the optional create-time placement (2026-01-15), nil to omit.
+func (mc *markdownClient) CreatePageWithMarkdownAndTitle(ctx context.Context, parentPageID, title, markdown string, position map[string]interface{}) (string, string, error) {
 	body := map[string]interface{}{
 		"parent":   map[string]string{"page_id": parentPageID},
 		"markdown": markdown,
@@ -101,6 +102,9 @@ func (mc *markdownClient) CreatePageWithMarkdownAndTitle(ctx context.Context, pa
 				},
 			},
 		},
+	}
+	if position != nil {
+		body["position"] = position
 	}
 
 	respBody, err := mc.doRequest(ctx, http.MethodPost, "https://api.notion.com/v1/pages", body)
