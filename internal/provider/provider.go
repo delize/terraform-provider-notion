@@ -125,6 +125,7 @@ func (p *NotionProvider) Configure(ctx context.Context, req provider.ConfigureRe
 func (p *NotionProvider) Actions(_ context.Context) []func() action.Action {
 	return []func() action.Action{
 		NewLegalHoldExportAction,
+		NewRevokeUserSessionsAction,
 	}
 }
 
