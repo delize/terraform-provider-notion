@@ -91,7 +91,7 @@ func doNotionRequestWithVersion(ctx context.Context, method, url, token, notionV
 			req.Header.Set("Content-Type", "application/json")
 		}
 
-		resp, err := trashHTTPClient.Do(req)
+		resp, err := httpClientForToken(token).Do(req)
 		if err != nil {
 			return nil, err
 		}

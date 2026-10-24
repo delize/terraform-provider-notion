@@ -19,7 +19,8 @@ type NotionProvider struct {
 }
 
 type NotionProviderModel struct {
-	Token types.String `tfsdk:"token"`
+	Token               types.String `tfsdk:"token"`
+	SilentNotifications types.Bool   `tfsdk:"silent_notifications"`
 }
 
 func New(version string) func() provider.Provider {
@@ -43,6 +44,11 @@ func (p *NotionProvider) Schema(_ context.Context, _ provider.SchemaRequest, res
 				Description: "Notion API token. Can also be set via the NOTION_TOKEN environment variable.",
 				Optional:    true,
 				Sensitive:   true,
+			},
+			"silent_notifications": schema.BoolAttribute{
+				Description: "Create and update pages without sending Notion notifications. Skips page update, @mention, and Person property notifications. " +
+					"Database automations, reminders, and webhooks still run. Defaults to false.",
+				Optional: true,
 			},
 		},
 	}
@@ -73,11 +79,16 @@ func (p *NotionProvider) Configure(ctx context.Context, req provider.ConfigureRe
 	// HTML-from-edge responses don't bubble up as the cryptic
 	// "invalid character '<' looking for beginning of value" decode
 	// error. See retry_transport.go for the full policy.
+	//
+	// silent_notifications adds notifications.mode=silent to page create
+	// and update bodies (Notion API 2026-10-08). See notion_notifications.go.
+	httpClient := newProviderHTTPClient(config.SilentNotifications.ValueBool())
 	client := notionapi.NewClient(
 		notionapi.Token(token),
-		notionapi.WithHTTPClient(newRetryHTTPClient()),
+		notionapi.WithHTTPClient(httpClient),
 	)
 	registerClientToken(client, token)
+	registerHTTPClient(token, httpClient)
 
 	resp.ResourceData = client
 	resp.DataSourceData = client

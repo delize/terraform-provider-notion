@@ -22,6 +22,22 @@ The token can be provided in two ways:
 
 ~> **OAuth public connections:** If you obtain your token via the OAuth flow on a public connection, Notion mints a fresh `access_token` and `refresh_token` for each successful authorization (2026-06-08 change). Always store and use the latest pair returned — including from re-authorizations of the same connection — and feed that `access_token` to this provider via `NOTION_TOKEN` or the `token` attribute. The provider itself does not perform the OAuth flow.
 
+~> **Personal access tokens expire:** Since 2026-07-02 a personal access token can expire after 7, 30, 90, or 180 days, or 1 year (the default). An expired token fails with an `unauthorized` error, so rotate the value behind `NOTION_TOKEN` before it lapses.
+
+## Silent writes
+
+Set `silent_notifications = true` to create and update pages without Notion notifications (Notion API 2026-10-08). That skips page update notifications, @mentions, and notifications for people added to a Person property. Database automations, reminders, and connection webhooks still run. This is useful when Terraform manages pages that people are mentioned or assigned in, since every apply would otherwise notify them.
+
+```terraform
+provider "notion" {
+  silent_notifications = true
+}
+```
+
+## Rate limits and retries
+
+Notion limits requests per connection (180 per minute, or 600 on Business and Enterprise, since 2026-09-09) and per workspace across all connections (since 2026-06-16). The provider retries `429` responses using Notion's `Retry-After` value and retries transient `5xx` responses with backoff. A `504 gateway_timeout` on a write is not retried, because Notion says the write may already have saved, so check the page before re-running the apply. On Free workspaces, writes past the workspace block limit fail with `403` (since 2026-09-01).
+
 ## Example Usage
 
 ```terraform
@@ -83,4 +99,5 @@ provider "notion" {
 
 ### Optional
 
+- `silent_notifications` (Boolean) Create and update pages without sending Notion notifications. Defaults to `false`.
 - `token` (String, Sensitive) Notion API token. Can also be set via the `NOTION_TOKEN` environment variable.
