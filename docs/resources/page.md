@@ -30,7 +30,25 @@ resource "notion_page" "with_appended_note" {
     position = "end"
   }
 }
+
+# Native Notion icon, locked in the Notion app, created at the top of its parent
+resource "notion_page" "runbook" {
+  parent_page_id = "your-parent-page-id"
+  title          = "On-call runbook"
+  icon_name      = "pizza"
+  icon_color     = "blue"
+  is_locked      = true
+  position       = "page_start"
+}
 ```
+
+## Icons
+
+Set at most one of `icon` (an emoji), `icon_name` with optional `icon_color` (a native Notion icon, API 2026-03-25), `icon_url` (an external image), or `icon_custom_emoji_id` (a custom emoji from the integration's workspace). Removing all of them clears the page icon.
+
+Notion returns native icons by their internal name. Picker names such as `star circle` are accepted on write but read back as the internal name (`token`), which shows as a diff, so configure the internal name. URLs from Notion's own icon set, such as `https://www.notion.so/icons/pizza_blue.svg`, are rejected in `icon_url` because Notion stores them as native icons. Use `icon_name` and `icon_color` instead.
+
+Only the icon attributes you configure are tracked. An icon someone sets in the Notion UI on a page that doesn't configure one is left alone.
 
 ## Schema
 
@@ -43,7 +61,14 @@ resource "notion_page" "with_appended_note" {
 
 ### Optional
 
-- `icon` (String) Emoji icon for the page.
+- `icon` (String) Emoji icon for the page. Conflicts with the other icon attributes.
+- `icon_name` (String) Native Notion icon name, such as `pizza`. Use the internal name Notion returns.
+- `icon_color` (String) Color of the native icon: `gray` (default), `lightgray`, `brown`, `yellow`, `orange`, `green`, `blue`, `purple`, `pink`, or `red`. Requires `icon_name`.
+- `icon_url` (String) External image URL for the icon. Notion icon-set URLs are rejected.
+- `icon_custom_emoji_id` (String) ID of a custom emoji in the integration's workspace.
+- `is_locked` (Boolean) Whether the page is locked from editing in the Notion app. It does not block API updates, so Terraform can still change a locked page. When unset, the current value is reported and left alone.
+- `position` (String) Where to create the page in its parent: `page_start` or `page_end` (API 2026-01-15). Only used at creation. Changing it later stores the new value with a warning and does not move the page.
+- `after_block_id` (String) Create the page directly after this block in the parent page. Conflicts with `position`. Only used at creation.
 - `markdown` (String) Page content as enhanced markdown. Full-rewrite semantics
   (`replace_content`). Mutually exclusive with managing content via
   `notion_block` resources. Mutually exclusive with `template_id`.
