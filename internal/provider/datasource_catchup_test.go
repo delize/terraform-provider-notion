@@ -1,6 +1,7 @@
 package provider
 
 import (
+	"fmt"
 	"os"
 	"regexp"
 	"testing"
@@ -28,6 +29,47 @@ data "notion_search" "trash" {
 }
 `,
 				Check: resource.TestMatchResourceAttr("data.notion_search.trash", "results.#", regexp.MustCompile(`^[0-9]+$`)),
+			},
+		},
+	})
+}
+
+// TestAccPageMarkdownDataSource_IncludeTranscript proves Notion accepts
+// include_transcript (2026-02-26). The page has no meeting notes, so the
+// markdown should match the plain read.
+func TestAccPageMarkdownDataSource_IncludeTranscript(t *testing.T) {
+	parentPageID := os.Getenv("NOTION_TEST_PARENT_PAGE_ID")
+	if parentPageID == "" {
+		t.Skip("NOTION_TEST_PARENT_PAGE_ID not set")
+	}
+
+	resource.Test(t, resource.TestCase{
+		ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
+		Steps: []resource.TestStep{
+			{
+				Config: fmt.Sprintf(`
+resource "notion_page" "source" {
+  parent_page_id = %q
+  title          = "Transcript Flag Test Page"
+  markdown       = "## Notes\n\nNo meeting here."
+}
+
+data "notion_page_markdown" "plain" {
+  page_id = notion_page.source.id
+}
+
+data "notion_page_markdown" "with_transcript" {
+  page_id            = notion_page.source.id
+  include_transcript = true
+}
+`, parentPageID),
+				Check: resource.ComposeAggregateTestCheckFunc(
+					resource.TestCheckResourceAttrSet("data.notion_page_markdown.with_transcript", "markdown"),
+					resource.TestCheckResourceAttrPair(
+						"data.notion_page_markdown.with_transcript", "markdown",
+						"data.notion_page_markdown.plain", "markdown",
+					),
+				),
 			},
 		},
 	})

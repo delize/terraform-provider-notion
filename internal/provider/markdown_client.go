@@ -145,7 +145,14 @@ func (mc *markdownClient) CreateDatabaseEntryWithMarkdown(ctx context.Context, d
 
 // GetPageMarkdown retrieves a page's content as markdown.
 func (mc *markdownClient) GetPageMarkdown(ctx context.Context, pageID string) (*PageMarkdownResponse, error) {
-	url := fmt.Sprintf("https://api.notion.com/v1/pages/%s/markdown", pageID)
+	return mc.GetPageMarkdownWithTranscript(ctx, pageID, false)
+}
+
+// GetPageMarkdownWithTranscript retrieves a page's markdown, optionally with
+// full AI meeting note transcripts (include_transcript, 2026-02-26). Without
+// it, Notion renders a placeholder linking to each meeting note.
+func (mc *markdownClient) GetPageMarkdownWithTranscript(ctx context.Context, pageID string, includeTranscript bool) (*PageMarkdownResponse, error) {
+	url := pageMarkdownURL(pageID, includeTranscript)
 
 	respBody, err := mc.doRequest(ctx, http.MethodGet, url, nil)
 	if err != nil {
@@ -162,6 +169,14 @@ func (mc *markdownClient) GetPageMarkdown(ctx context.Context, pageID string) (*
 	}
 
 	return &result, nil
+}
+
+func pageMarkdownURL(pageID string, includeTranscript bool) string {
+	u := fmt.Sprintf("%s/pages/%s/markdown", notionAPIBaseURL, pageID)
+	if includeTranscript {
+		u += "?include_transcript=true"
+	}
+	return u
 }
 
 // ReplacePageMarkdown replaces all content in a page with new markdown.
