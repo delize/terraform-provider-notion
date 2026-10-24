@@ -30,6 +30,14 @@ type fakeAdminAPI struct {
 	members  map[string]map[string]string // group id -> user id -> role
 	requests []string                     // "METHOD path?query"
 	pageSize int                          // forces pagination when > 0
+	bodies   []map[string]interface{}     // decoded request bodies, in order
+
+	// Routes for other Admin API areas, registered by their test files.
+	// Each returns true when it handled the request.
+	routes []func(w http.ResponseWriter, r *http.Request, parts []string, body map[string]interface{}) bool
+
+	legalHolds map[string]*fakeLegalHold
+	areaState  map[string]interface{} // free-form state for other areas
 }
 
 func newFakeAdminAPI(t *testing.T) (*fakeAdminAPI, *httptest.Server) {
@@ -37,8 +45,10 @@ func newFakeAdminAPI(t *testing.T) (*fakeAdminAPI, *httptest.Server) {
 	f := &fakeAdminAPI{
 		t:       t,
 		token:   "adm_test",
-		groups:  map[string]string{},
-		members: map[string]map[string]string{},
+		groups:     map[string]string{},
+		members:    map[string]map[string]string{},
+		legalHolds: map[string]*fakeLegalHold{},
+		areaState:  map[string]interface{}{},
 	}
 	srv := httptest.NewServer(f)
 	prev := adminBaseURL
@@ -104,9 +114,20 @@ func (f *fakeAdminAPI) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if r.Body != nil {
 		_ = json.NewDecoder(r.Body).Decode(&body)
 	}
+	f.bodies = append(f.bodies, body)
 	parts := strings.Split(strings.Trim(r.URL.Path, "/"), "/")
 
+	inSpaces := len(parts) >= 2 && parts[1] == "spaces"
 	switch {
+	case !inSpaces:
+		// Other areas (legal holds, MCP connections, ...) are handled by
+		// registered routes below.
+		for _, route := range f.routes {
+			if route(w, r, parts, body) {
+				return
+			}
+		}
+		f.writeErr(w, 404, "object_not_found", "no route "+r.Method+" "+r.URL.Path)
 	case len(parts) == 2 && parts[1] == "spaces" && r.Method == http.MethodGet:
 		f.writeJSON(w, f.page(r, "space", []interface{}{
 			map[string]interface{}{"object": "space", "id": "11111111-1111-1111-1111-111111111111", "name": "Acme"},
@@ -199,6 +220,11 @@ func (f *fakeAdminAPI) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			f.writeJSON(w, membership(uid, role))
 		}
 	default:
+		for _, route := range f.routes {
+			if route(w, r, parts, body) {
+				return
+			}
+		}
 		f.writeErr(w, 404, "object_not_found", "no route "+r.Method+" "+r.URL.Path)
 	}
 }

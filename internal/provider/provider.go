@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"os"
 
+	"github.com/hashicorp/terraform-plugin-framework/action"
 	"github.com/hashicorp/terraform-plugin-framework/datasource"
 	"github.com/hashicorp/terraform-plugin-framework/provider"
 	"github.com/hashicorp/terraform-plugin-framework/provider/schema"
@@ -13,7 +14,10 @@ import (
 	"github.com/jomei/notionapi"
 )
 
-var _ provider.Provider = &NotionProvider{}
+var (
+	_ provider.Provider            = &NotionProvider{}
+	_ provider.ProviderWithActions = &NotionProvider{}
+)
 
 type NotionProvider struct {
 	version string
@@ -114,6 +118,14 @@ func (p *NotionProvider) Configure(ctx context.Context, req provider.ConfigureRe
 
 	resp.ResourceData = client
 	resp.DataSourceData = client
+	resp.ActionData = client
+}
+
+// Actions are one-shot Admin API operations. They need Terraform 1.14+.
+func (p *NotionProvider) Actions(_ context.Context) []func() action.Action {
+	return []func() action.Action{
+		NewLegalHoldExportAction,
+	}
 }
 
 func (p *NotionProvider) Resources(_ context.Context) []func() resource.Resource {
@@ -141,6 +153,7 @@ func (p *NotionProvider) Resources(_ context.Context) []func() resource.Resource
 		NewViewResource,
 		NewPermissionGroupResource,
 		NewPermissionGroupMemberResource,
+		NewLegalHoldResource,
 	}
 }
 
@@ -159,5 +172,7 @@ func (p *NotionProvider) DataSources(_ context.Context) []func() datasource.Data
 		NewPermissionGroupsDataSource,
 		NewAdminUsersDataSource,
 		NewWorkspacesDataSource,
+		NewLegalHoldsDataSource,
+		NewLegalHoldPagesDataSource,
 	}
 }
