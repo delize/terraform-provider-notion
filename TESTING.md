@@ -48,7 +48,10 @@ Optional, gates specific tests:
 | `notion_page` `markdown_insert` | `TestAccPageMarkdownInsert` | State-only check; can't compare page body byte-for-byte because Notion normalizes markdown. |
 | `notion_page` move | `TestAccPageMove` | Two steps flip `parent_page_id`; asserts the resource address stays the same (no recreate). |
 | `notion_page` template | `TestAccPageWithTemplate` | Smoke test — Notion applies the template asynchronously so we only assert state. |
-| `notion_database_property_status` | `TestAccDatabasePropertyStatusResource` | Create + option update. Groups (To-do / In progress / Complete) are server-assigned and not asserted. |
+| `notion_database_property_status` | `TestAccDatabasePropertyStatusResource` | Create, option update, then `option_groups` (2026-06-22) with an in-place color change (2026-10-09). `default_option` (2026-10-22) is logged rather than asserted, because Notion doesn't promise it on the 2022-06-28 response this resource reads. |
+| `option_groups` validation | `TestUnitStatusOptionGroups_*` | Plan-only through real Terraform, no workspace needed. Rejects unknown group names and grouped options missing from `options`. |
+| `silent_notifications` | `TestAccSilentNotifications` | Page create, update, and destroy with the setting on, across the SDK (2022-06-28) and direct-HTTP (2026-03-11) paths. Proves Notion accepts `notifications.mode`. Whether a notification was sent can't be observed from the API. |
+| Retry transport, silent body injection, status schema parsing | `TestRetryTransport_*`, `TestNotificationsTransport_*`, `TestParseStatusProperty_*` | Unit tests against `httptest` servers and fixtures. |
 | `notion_view` | `TestAccViewResource` | Create + rename + import-verify. Skips when the workspace's API doesn't return a `data_sources` array on database GET (pre-v2025-09-03). |
 | `notion_view_query` | `TestAccViewQueryDataSource` | Requires `NOTION_TEST_VIEW_ID`. |
 

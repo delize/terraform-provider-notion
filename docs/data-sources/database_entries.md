@@ -49,8 +49,8 @@ output "task_titles" {
     - **URL / Email / Phone** - raw string value
     - **People** - comma-separated user names
     - **Relation** - comma-separated page IDs
-    - **Formula** - computed result as string
-    - **Rollup** - aggregated result as string
+    - **Formula** - computed result as string. Empty when Notion returns `type: "unsupported"` because the formula depends on too many related pages or nested formulas (2026-08-05).
+    - **Rollup** - aggregated result as string. Empty when Notion returns `type: "unsupported"` for the same reason.
     - **Unique ID** - prefixed ID (e.g. `"PROJ-123"`)
     - **Created time / Last edited time** - RFC3339 timestamp
     - **Created by / Last edited by** - user name

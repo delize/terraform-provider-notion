@@ -29,7 +29,7 @@ resource "notion_database_property_multi_select" "tags" {
 
 - `database` (String) The ID of the parent database. Changing this forces a new resource.
 - `name` (String) The name of the property. Changing this forces a new resource.
-- `options` (Map of String) A map of option labels to colors. Valid colors: `default`, `gray`, `brown`, `orange`, `yellow`, `green`, `blue`, `purple`, `pink`, `red`.
+- `options` (Map of String) A map of option labels to colors. Valid colors: `default`, `gray`, `brown`, `orange`, `yellow`, `green`, `blue`, `purple`, `pink`, `red`. Changing an existing option's color updates it in place (Notion API 2026-10-09). Notion matches option names without regard to case, so `high` and `High` are the same option. Removing an option from the map removes it from the property.
 
 ### Read-Only
 
