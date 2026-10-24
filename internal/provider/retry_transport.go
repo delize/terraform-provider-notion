@@ -193,9 +193,14 @@ func isWriteGatewayTimeout(req *http.Request, resp *http.Response) bool {
 	if resp.Body == nil {
 		return false
 	}
-	body, err := io.ReadAll(io.LimitReader(resp.Body, 1<<16))
-	_ = resp.Body.Close()
-	resp.Body = io.NopCloser(bytes.NewReader(body))
+	// Peek at most 64 KiB, then put the peeked bytes back in front of the
+	// unread remainder so the caller sees the full, untouched body.
+	orig := resp.Body
+	body, err := io.ReadAll(io.LimitReader(orig, 1<<16))
+	resp.Body = struct {
+		io.Reader
+		io.Closer
+	}{io.MultiReader(bytes.NewReader(body), orig), orig}
 	if err != nil {
 		return false
 	}
