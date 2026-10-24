@@ -75,6 +75,68 @@ data "notion_page_markdown" "with_transcript" {
 	})
 }
 
+// TestAccDatabaseEntriesDataSource_FilterAndSorts builds a small database
+// and queries it with a multi-value select filter (2026-04-17) and a title
+// sort. Database queries are read-consistent, unlike search, so exact counts
+// and order are asserted.
+func TestAccDatabaseEntriesDataSource_FilterAndSorts(t *testing.T) {
+	parentPageID := os.Getenv("NOTION_TEST_PARENT_PAGE_ID")
+	if parentPageID == "" {
+		t.Skip("NOTION_TEST_PARENT_PAGE_ID not set")
+	}
+
+	resource.Test(t, resource.TestCase{
+		ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
+		Steps: []resource.TestStep{
+			{
+				Config: fmt.Sprintf(`
+resource "notion_database" "filter_test" {
+  parent             = %q
+  title              = "Entries Filter Test DB"
+  title_column_title = "Name"
+}
+
+resource "notion_database_property_select" "stage" {
+  database = notion_database.filter_test.id
+  name     = "Stage"
+  options = {
+    "Draft"  = "gray"
+    "Review" = "yellow"
+    "Live"   = "green"
+  }
+}
+
+resource "notion_database_entry" "rows" {
+  for_each = { "Alpha" = "Draft", "Bravo" = "Review", "Charlie" = "Live" }
+
+  database          = notion_database.filter_test.id
+  title             = each.key
+  select_properties = { "Stage" = each.value }
+
+  depends_on = [notion_database_property_select.stage]
+}
+
+data "notion_database_entries" "not_live" {
+  database = notion_database.filter_test.id
+  filter = jsonencode({
+    property = "Stage"
+    select   = { equals = ["Draft", "Review"] }
+  })
+  sorts = jsonencode([{ property = "Name", direction = "descending" }])
+
+  depends_on = [notion_database_entry.rows]
+}
+`, parentPageID),
+				Check: resource.ComposeAggregateTestCheckFunc(
+					resource.TestCheckResourceAttr("data.notion_database_entries.not_live", "entries.#", "2"),
+					resource.TestCheckResourceAttr("data.notion_database_entries.not_live", "entries.0.title", "Bravo"),
+					resource.TestCheckResourceAttr("data.notion_database_entries.not_live", "entries.1.title", "Alpha"),
+				),
+			},
+		},
+	})
+}
+
 // TestAccUsersDataSource_EmailVerified reads users over the direct-HTTP path.
 // email_verified is null for bots and when the token lacks email
 // capabilities, so the test asserts the list still loads.
