@@ -18,8 +18,16 @@ resource "notion_database" "tasks" {
   parent             = notion_page.example.id
   title              = "Tasks"
   title_column_title = "Task Name"
+  icon_name          = "token"
+  is_locked          = true
 }
 ```
+
+## Icons
+
+The icon attributes work like the ones on `notion_page`. The difference is `icon`, which reports the database's current emoji when it isn't configured and leaves it alone, so existing configs keep working. Set at most one of `icon`, `icon_name` (with optional `icon_color`), `icon_url`, or `icon_custom_emoji_id`.
+
+Icon and `is_locked` are written and read on the database itself over Notion API version 2026-03-11. Schema changes stay on the 2022-06-28 path, so a refresh makes two requests per database.
 
 ## Schema
 
@@ -28,6 +36,15 @@ resource "notion_database" "tasks" {
 - `parent` (String) The ID of the parent page. Changing this forces a new resource.
 - `title` (String) The title of the database.
 - `title_column_title` (String) The name of the title column (every Notion database has one). Can be renamed on existing databases.
+
+### Optional
+
+- `icon` (String) Emoji icon. When unset, the current emoji is reported and left alone. Conflicts with the other icon attributes.
+- `icon_name` (String) Native Notion icon name (API 2026-03-25). Use the internal name Notion returns.
+- `icon_color` (String) Color of the native icon: `gray` (default), `lightgray`, `brown`, `yellow`, `orange`, `green`, `blue`, `purple`, `pink`, or `red`. Requires `icon_name`.
+- `icon_url` (String) External image URL for the icon. Notion icon-set URLs are rejected.
+- `icon_custom_emoji_id` (String) ID of a custom emoji in the integration's workspace.
+- `is_locked` (Boolean) Whether the database is locked from editing in the Notion app. It does not block API updates. When unset, the current value is reported and left alone.
 
 ### Read-Only
 
