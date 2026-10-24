@@ -122,28 +122,62 @@ func (c *adminClient) do(ctx context.Context, method, path string, query url.Val
 	return nil
 }
 
-// adminListPage is the documented list envelope. Every Admin API list uses
-// cursor pagination with start_cursor in and next_cursor out.
-type adminListPage struct {
-	Results    []json.RawMessage `json:"results"`
-	HasMore    bool              `json:"has_more"`
-	NextCursor *string           `json:"next_cursor"`
+// adminListSpec describes one list endpoint's pagination. The Admin API is
+// not uniform across areas:
+//
+//   - Groups, users, workspaces, MCP connections, and PATs take
+//     start_cursor and return results with has_more and next_cursor.
+//   - Agent lists and agent permissions take cursor instead.
+//   - Legal hold lists name the array after the resource (legal_holds,
+//     user_ids, page_ids, workspace_ids), have no has_more, and omit
+//     next_cursor on the last page.
+//
+// Every list stops when next_cursor is empty, and also when has_more is
+// present and false.
+type adminListSpec struct {
+	Path        string
+	Query       url.Values // extra filters, copied per request
+	CursorParam string     // "start_cursor" when empty
+	ResultsKey  string     // "results" when empty
+	PageSize    int        // sent as page_size when > 0
 }
 
-// listAll walks every page of a list endpoint and calls each with every
+// listPages walks every page of a list endpoint and calls each with every
 // result. A false return from each stops early.
-func (c *adminClient) listAll(ctx context.Context, path string, each func(json.RawMessage) (bool, error)) error {
+func (c *adminClient) listPages(ctx context.Context, spec adminListSpec, each func(json.RawMessage) (bool, error)) error {
+	cursorParam := spec.CursorParam
+	if cursorParam == "" {
+		cursorParam = "start_cursor"
+	}
+	resultsKey := spec.ResultsKey
+	if resultsKey == "" {
+		resultsKey = "results"
+	}
+
 	cursor := ""
 	for {
-		q := url.Values{"page_size": {"100"}}
-		if cursor != "" {
-			q.Set("start_cursor", cursor)
+		q := url.Values{}
+		for k, v := range spec.Query {
+			q[k] = append([]string(nil), v...)
 		}
-		var page adminListPage
-		if err := c.do(ctx, http.MethodGet, path, q, nil, &page); err != nil {
+		if spec.PageSize > 0 {
+			q.Set("page_size", fmt.Sprint(spec.PageSize))
+		}
+		if cursor != "" {
+			q.Set(cursorParam, cursor)
+		}
+
+		var page map[string]json.RawMessage
+		if err := c.do(ctx, http.MethodGet, spec.Path, q, nil, &page); err != nil {
 			return err
 		}
-		for _, raw := range page.Results {
+		var results []json.RawMessage
+		if raw, ok := page[resultsKey]; ok && string(raw) != "null" {
+			if err := json.Unmarshal(raw, &results); err != nil {
+				return fmt.Errorf("failed to parse %s from %s: %w", resultsKey, spec.Path, err)
+			}
+		}
+		for _, raw := range results {
 			more, err := each(raw)
 			if err != nil {
 				return err
@@ -152,11 +186,42 @@ func (c *adminClient) listAll(ctx context.Context, path string, each func(json.R
 				return nil
 			}
 		}
-		if !page.HasMore || page.NextCursor == nil || *page.NextCursor == "" {
+
+		var next *string
+		if raw, ok := page["next_cursor"]; ok {
+			_ = json.Unmarshal(raw, &next)
+		}
+		if raw, ok := page["has_more"]; ok {
+			var hasMore bool
+			if json.Unmarshal(raw, &hasMore) == nil && !hasMore {
+				return nil
+			}
+		}
+		if next == nil || *next == "" {
 			return nil
 		}
-		cursor = *page.NextCursor
+		cursor = *next
 	}
+}
+
+// listAll pages through a standard start_cursor list of 100 per page.
+func (c *adminClient) listAll(ctx context.Context, path string, each func(json.RawMessage) (bool, error)) error {
+	return c.listPages(ctx, adminListSpec{Path: path, PageSize: 100}, each)
+}
+
+// listInto collects every result of a list into out, decoding each element
+// as T.
+func listInto[T any](ctx context.Context, c *adminClient, spec adminListSpec) ([]T, error) {
+	var out []T
+	err := c.listPages(ctx, spec, func(raw json.RawMessage) (bool, error) {
+		var v T
+		if err := json.Unmarshal(raw, &v); err != nil {
+			return false, err
+		}
+		out = append(out, v)
+		return true, nil
+	})
+	return out, err
 }
 
 func adminSpacePath(spaceID string, rest ...string) string {
