@@ -21,11 +21,12 @@ type UsersDataSourceModel struct {
 }
 
 type UserDataModel struct {
-	ID        types.String `tfsdk:"id"`
-	Name      types.String `tfsdk:"name"`
-	Type      types.String `tfsdk:"type"`
-	Email     types.String `tfsdk:"email"`
-	AvatarURL types.String `tfsdk:"avatar_url"`
+	ID            types.String `tfsdk:"id"`
+	Name          types.String `tfsdk:"name"`
+	Type          types.String `tfsdk:"type"`
+	Email         types.String `tfsdk:"email"`
+	EmailVerified types.Bool   `tfsdk:"email_verified"`
+	AvatarURL     types.String `tfsdk:"avatar_url"`
 }
 
 func NewUsersDataSource() datasource.DataSource {
@@ -61,6 +62,10 @@ func (d *UsersDataSource) Schema(_ context.Context, _ datasource.SchemaRequest, 
 							Description: "Email address for person-type users (empty for bots).",
 							Computed:    true,
 						},
+						"email_verified": schema.BoolAttribute{
+							Description: "Whether Notion has verified the person's email address. Null for bots and when Notion doesn't return it.",
+							Computed:    true,
+						},
 						"avatar_url": schema.StringAttribute{
 							Description: "URL of the user's avatar image, if set.",
 							Computed:    true,
@@ -87,37 +92,22 @@ func (d *UsersDataSource) Configure(_ context.Context, req datasource.ConfigureR
 
 func (d *UsersDataSource) Read(ctx context.Context, _ datasource.ReadRequest, resp *datasource.ReadResponse) {
 	var state UsersDataSourceModel
-	var cursor notionapi.Cursor
 
-	for {
-		page, err := d.client.User.List(ctx, &notionapi.Pagination{
-			StartCursor: cursor,
-			PageSize:    100,
-		})
-		if err != nil {
-			resp.Diagnostics.AddError("Error listing users", err.Error())
-			return
-		}
+	token, err := tokenForClient(d.client)
+	if err != nil {
+		resp.Diagnostics.AddError("Error listing users", err.Error())
+		return
+	}
 
-		for _, user := range page.Results {
-			model := UserDataModel{
-				ID:        types.StringValue(normalizeID(string(user.ID))),
-				Name:      types.StringValue(user.Name),
-				Type:      types.StringValue(string(user.Type)),
-				AvatarURL: types.StringValue(user.AvatarURL),
-			}
-			if user.Person != nil {
-				model.Email = types.StringValue(user.Person.Email)
-			} else {
-				model.Email = types.StringValue("")
-			}
-			state.Users = append(state.Users, model)
+	err = listUsersRaw(ctx, token, func(users []rawListedUser) bool {
+		for _, u := range users {
+			state.Users = append(state.Users, userDataModelFor(u))
 		}
-
-		if !page.HasMore {
-			break
-		}
-		cursor = notionapi.Cursor(page.NextCursor)
+		return true
+	})
+	if err != nil {
+		resp.Diagnostics.AddError("Error listing users", err.Error())
+		return
 	}
 
 	if state.Users == nil {
@@ -125,4 +115,15 @@ func (d *UsersDataSource) Read(ctx context.Context, _ datasource.ReadRequest, re
 	}
 
 	resp.Diagnostics.Append(resp.State.Set(ctx, &state)...)
+}
+
+func userDataModelFor(u rawListedUser) UserDataModel {
+	return UserDataModel{
+		ID:            types.StringValue(normalizeID(u.ID)),
+		Name:          types.StringValue(u.Name),
+		Type:          types.StringValue(u.Type),
+		Email:         types.StringValue(u.email()),
+		EmailVerified: types.BoolPointerValue(u.emailVerified()),
+		AvatarURL:     types.StringValue(u.AvatarURL),
+	}
 }

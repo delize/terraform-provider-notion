@@ -56,4 +56,5 @@ Read-Only:
 - `name` (String) The user's display name.
 - `type` (String) The user type (`person` or `bot`).
 - `email` (String) Email address for person-type users (empty for bots).
+- `email_verified` (Boolean) Whether Notion has verified the person's email address (Notion API 2026-07-15). Null for bots and when Notion doesn't return it.
 - `avatar_url` (String) URL of the user's avatar image, if set.
