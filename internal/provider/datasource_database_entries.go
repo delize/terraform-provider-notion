@@ -1,7 +1,6 @@
 package provider
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -280,17 +279,10 @@ func (d *DatabaseEntriesDataSource) queryDatabaseRaw(ctx context.Context, databa
 		return nil, fmt.Errorf("failed to marshal request: %w", err)
 	}
 
-	url := fmt.Sprintf("https://api.notion.com/v1/databases/%s/query", databaseID)
-	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(bodyBytes))
-	if err != nil {
-		return nil, fmt.Errorf("failed to create request: %w", err)
-	}
-
-	httpReq.Header.Set("Authorization", fmt.Sprintf("Bearer %s", d.client.Token.String()))
-	httpReq.Header.Set("Notion-Version", "2022-06-28")
-	httpReq.Header.Set("Content-Type", "application/json")
-
-	httpResp, err := http.DefaultClient.Do(httpReq)
+	url := fmt.Sprintf("%s/databases/%s/query", notionAPIBaseURL, databaseID)
+	// 2022-06-28 keeps the database-as-schema query shape this data source
+	// parses. The shared helper adds 429 and 5xx retry.
+	httpResp, err := doNotionRequestWithVersion(ctx, http.MethodPost, url, d.client.Token.String(), "2022-06-28", bodyBytes)
 	if err != nil {
 		return nil, fmt.Errorf("failed to query database: %w", err)
 	}

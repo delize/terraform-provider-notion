@@ -1,7 +1,6 @@
 package provider
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -30,27 +29,19 @@ func newMarkdownClient(client *notionapi.Client) *markdownClient {
 }
 
 func (mc *markdownClient) doRequest(ctx context.Context, method, url string, body interface{}) ([]byte, error) {
-	var reqBody io.Reader
+	var reqBody []byte
 	if body != nil {
 		b, err := json.Marshal(body)
 		if err != nil {
 			return nil, fmt.Errorf("failed to marshal request body: %w", err)
 		}
-		reqBody = bytes.NewReader(b)
+		reqBody = b
 	}
 
-	req, err := http.NewRequestWithContext(ctx, method, url, reqBody)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create request: %w", err)
-	}
-
-	req.Header.Set("Authorization", fmt.Sprintf("Bearer %s", mc.token))
-	req.Header.Set("Notion-Version", markdownAPIVersion)
-	if body != nil {
-		req.Header.Set("Content-Type", "application/json")
-	}
-
-	resp, err := http.DefaultClient.Do(req)
+	// Shared helper: 429 retry with Retry-After, plus 5xx retry in
+	// retryTransport. Previously this used http.DefaultClient and surfaced
+	// every rate limit straight to the user.
+	resp, err := doNotionRequestWithVersion(ctx, method, url, mc.token, markdownAPIVersion, reqBody)
 	if err != nil {
 		return nil, fmt.Errorf("request failed: %w", err)
 	}
