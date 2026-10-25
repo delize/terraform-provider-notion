@@ -22,7 +22,7 @@ type fakeAgent struct {
 }
 
 type fakeAgentWorkspace struct {
-	Policy      string
+	Policy        string
 	PolicyCalls   []map[string]interface{}
 	LimitCalls    []interface{}
 	LimitFailures int // fail this many credit limit calls with a 400
