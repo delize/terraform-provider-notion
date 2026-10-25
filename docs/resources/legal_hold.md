@@ -13,7 +13,9 @@ Manages an organization legal hold and the users under it through the [Admin API
 
 The API has no way to change a hold's dates or preserved activity types, so changing `start_date`, `end_date`, or `user_interaction_types` creates a new hold. With the default `release_on_destroy = false`, the old hold stays active.
 
-Dates are numbers. Neither the legal hold reference nor the [Help Center article](https://www.notion.com/help/legal-holds) states a unit, and the provider passes them through as epoch milliseconds, the unit every other Admin API endpoint documents.
+Dates are numbers. Neither the legal hold reference nor the [Help Center article](https://www.notion.com/help/legal-holds) states a unit, and the provider passes them through as epoch milliseconds, the unit every other Admin API endpoint documents. Values small enough to be epoch seconds are rejected at plan time, and a `start_date` before May 2022 gets a warning.
+
+If Notion reports a different `start_date`, `end_date`, or `user_interaction_types` than what was applied (for example a date in another unit, or a normalized activity list), the provider keeps the applied value in state and shows a warning on every refresh. That avoids a failed apply and a replacement plan that would create a second active hold. If you see that warning, please report it, because it means the unit assumption is wrong.
 
 What the Help Center adds:
 
