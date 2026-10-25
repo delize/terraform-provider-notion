@@ -258,7 +258,9 @@ func (r *BlockResource) Create(ctx context.Context, req resource.CreateRequest, 
 
 	if isRawBlockType(plan.Type.ValueString()) {
 		resp.Diagnostics.Append(r.createRawBlock(ctx, &plan)...)
-		if resp.Diagnostics.HasError() {
+		// Once the block exists, save it even if reading its tab items
+		// failed, so Terraform taints it rather than losing track of it.
+		if plan.ID.IsUnknown() || plan.ID.ValueString() == "" {
 			return
 		}
 		resp.Diagnostics.Append(resp.State.Set(ctx, &plan)...)

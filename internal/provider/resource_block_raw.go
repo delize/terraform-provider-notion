@@ -104,17 +104,23 @@ func (r *BlockResource) createRawBlock(ctx context.Context, plan *BlockResourceM
 
 	if plan.Type.ValueString() == "tab" {
 		children, err := listBlockChildrenRaw(ctx, token, created.ID)
-		if err != nil {
+		switch {
+		case err != nil:
 			diags.AddError("Error reading new tab items", err.Error())
-			return diags
-		}
-		if len(children) != len(items) {
+		case len(children) != len(items):
 			diags.AddError("Error reading new tab items",
 				fmt.Sprintf("created %d tab items but Notion returned %d", len(items), len(children)))
-			return diags
+		default:
+			for i := range items {
+				items[i].ID = types.StringValue(normalizeID(children[i].ID))
+			}
 		}
+		// On error the item IDs stay null so the block can still be saved
+		// (and tainted) instead of orphaned.
 		for i := range items {
-			items[i].ID = types.StringValue(normalizeID(children[i].ID))
+			if items[i].ID.IsUnknown() {
+				items[i].ID = types.StringNull()
+			}
 		}
 		list, d := tabItemsToList(ctx, items)
 		diags.Append(d...)
