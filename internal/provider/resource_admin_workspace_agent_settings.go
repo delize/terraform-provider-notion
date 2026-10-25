@@ -128,20 +128,25 @@ func (r *AdminWorkspaceAgentSettingsResource) apply(ctx context.Context, plan, s
 		plan.CurrentPolicyDescription = types.StringNull()
 	}
 
-	if !plan.CreationPolicy.IsNull() && (state == nil || !plan.CreationPolicy.Equal(state.CreationPolicy)) {
-		res, err := admin.UpdateAgentCreationPolicy(ctx, ws, plan.CreationPolicy.ValueString(), plan.DisableExistingAgents.ValueBool())
-		if err != nil {
-			return fmt.Errorf("updating agent creation policy: %w", err)
-		}
-		plan.CurrentPolicyDescription = types.StringValue(res.CurrentPolicyDescription)
-	}
-
+	// The credit limit goes first because resending it is harmless. The
+	// policy call can disable every existing agent, so it runs last: once
+	// it succeeds nothing else can fail, and state always records it. In
+	// the other order, a failed limit call would leave the policy unsaved
+	// and the next apply would disable agents an admin had re-enabled.
 	limitChanged := state == nil && !plan.DefaultAgentCreditLimit.IsNull() ||
 		state != nil && !plan.DefaultAgentCreditLimit.Equal(state.DefaultAgentCreditLimit)
 	if limitChanged {
 		if _, err := admin.UpdateWorkspaceCreditLimit(ctx, ws, int64PtrFrom(plan.DefaultAgentCreditLimit)); err != nil {
 			return fmt.Errorf("updating default agent credit limit: %w", err)
 		}
+	}
+
+	if !plan.CreationPolicy.IsNull() && (state == nil || !plan.CreationPolicy.Equal(state.CreationPolicy)) {
+		res, err := admin.UpdateAgentCreationPolicy(ctx, ws, plan.CreationPolicy.ValueString(), plan.DisableExistingAgents.ValueBool())
+		if err != nil {
+			return fmt.Errorf("updating agent creation policy: %w", err)
+		}
+		plan.CurrentPolicyDescription = types.StringValue(res.CurrentPolicyDescription)
 	}
 	return nil
 }

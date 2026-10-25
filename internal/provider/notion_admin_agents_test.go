@@ -23,8 +23,9 @@ type fakeAgent struct {
 
 type fakeAgentWorkspace struct {
 	Policy      string
-	PolicyCalls []map[string]interface{}
-	LimitCalls  []interface{}
+	PolicyCalls   []map[string]interface{}
+	LimitCalls    []interface{}
+	LimitFailures int // fail this many credit limit calls with a 400
 }
 
 func (f *fakeAdminAPI) agents() map[string]*fakeAgent {
@@ -101,6 +102,11 @@ func (f *fakeAdminAPI) serveAgents(w http.ResponseWriter, r *http.Request, parts
 	ws := f.agentWorkspace()
 	if len(parts) == 4 && parts[3] == "credit_limit" && r.Method == http.MethodPatch {
 		ws.LimitCalls = append(ws.LimitCalls, body["default_agent_credit_limit"])
+		if ws.LimitFailures > 0 {
+			ws.LimitFailures--
+			f.writeErr(w, 400, "validation_error", "Injected credit limit failure.")
+			return true
+		}
 		f.writeJSON(w, map[string]interface{}{"space_id": parts[2], "default_agent_credit_limit": body["default_agent_credit_limit"]})
 		return true
 	}
@@ -387,6 +393,38 @@ func TestUnitAdminWorkspaceAgentSettings(t *testing.T) {
 			},
 		},
 	})
+}
+
+// When one of the two settings calls fails, the next apply must not resend
+// disable_existing_agents, which would disable agents an admin re-enabled.
+func TestUnitAdminWorkspaceAgentSettings_FailedLimitDoesNotResendDisable(t *testing.T) {
+	f := newFakeAdminAPIWithAgents(t)
+	prov := adminOnlyProvider(t, f.token)
+	ws := f.agentWorkspace()
+	cfg := prov + `resource "notion_admin_workspace_agent_settings" "acme" {
+  workspace_id               = "ws-1"
+  creation_policy            = "disabled"
+  disable_existing_agents    = true
+  default_agent_credit_limit = 100
+}
+`
+	ws.LimitFailures = 1
+	resource.UnitTest(t, resource.TestCase{
+		ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
+		Steps: []resource.TestStep{
+			{Config: cfg, ExpectError: regexp.MustCompile(`updating default agent credit limit`)},
+			{Config: cfg},
+		},
+	})
+	disables := 0
+	for _, c := range ws.PolicyCalls {
+		if c["disable_existing_agents"] == true {
+			disables++
+		}
+	}
+	if disables != 1 {
+		t.Fatalf("disable_existing_agents was sent %d times, want 1 (calls: %v)", disables, ws.PolicyCalls)
+	}
 }
 
 func TestUnitAdminAgentDataSourcesAndDeleteAction(t *testing.T) {
