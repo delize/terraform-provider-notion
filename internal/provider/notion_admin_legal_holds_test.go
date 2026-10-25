@@ -119,6 +119,11 @@ func (f *fakeAdminAPI) serveLegalHolds(w http.ResponseWriter, r *http.Request, p
 			for _, u := range strList(body["user_ids"]) {
 				h.Users[u] = true
 			}
+			// Tests can make the fake store values differently from what
+			// was sent, to mimic undocumented server normalization.
+			if hook, ok := f.areaState["legalHoldOnCreate"].(func(*fakeLegalHold)); ok {
+				hook(h)
+			}
 			f.legalHolds[h.ID] = h
 			f.writeJSON(w, h.json())
 		}
@@ -367,6 +372,72 @@ resource "terraform_data" "t" {
 }`,
 				PlanOnly:    true,
 				ExpectError: regexp.MustCompile(`Set exactly one of workspace_id`),
+			},
+		},
+	})
+}
+
+// Notion doesn't document the date unit or whether it normalizes activity
+// types. If it stores something other than what was sent, apply must not
+// fail and the next plan must not replace the hold, since a replacement
+// creates a second active hold.
+func TestUnitLegalHold_ServerNormalizedValuesKeepApplied(t *testing.T) {
+	f := newFakeAdminAPIWithLegalHolds(t)
+	f.areaState["legalHoldOnCreate"] = func(h *fakeLegalHold) {
+		h.StartDate /= 1000
+		h.Types = []string{"page.created", "page.edited", "page.viewed"}
+	}
+	prov := adminOnlyProvider(t, f.token)
+	cfg := legalHoldConfig(prov, "Case 9", "", []string{"u1"}, false)
+
+	resource.UnitTest(t, resource.TestCase{
+		ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
+		Steps: []resource.TestStep{
+			{
+				Config: cfg,
+				Check: resource.ComposeAggregateTestCheckFunc(
+					resource.TestCheckResourceAttr("notion_legal_hold.case", "start_date", "1760000000000"),
+					resource.TestCheckResourceAttr("notion_legal_hold.case", "user_interaction_types.#", "2"),
+				),
+			},
+			{
+				Config: cfg,
+				ConfigPlanChecks: resource.ConfigPlanChecks{
+					PreApply: []plancheck.PlanCheck{plancheck.ExpectEmptyPlan()},
+				},
+			},
+		},
+	})
+	if len(f.legalHolds) != 1 {
+		t.Fatalf("expected exactly one hold, got %d", len(f.legalHolds))
+	}
+}
+
+func TestUnitLegalHold_DateGuards(t *testing.T) {
+	prov := adminOnlyProvider(t, "adm_test")
+	hold := func(start string) string {
+		return prov + fmt.Sprintf(`
+resource "notion_legal_hold" "x" {
+  name                   = "x"
+  start_date             = %s
+  user_interaction_types = ["page.created"]
+  user_ids               = ["u1"]
+}`, start)
+	}
+	resource.UnitTest(t, resource.TestCase{
+		ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
+		Steps: []resource.TestStep{
+			{
+				// Epoch seconds by mistake.
+				Config:      hold("1760000000"),
+				PlanOnly:    true,
+				ExpectError: regexp.MustCompile(`Date looks like seconds`),
+			},
+			{
+				// Before May 2022 is a warning, not an error.
+				Config:             hold("1600000000000"),
+				PlanOnly:           true,
+				ExpectNonEmptyPlan: true,
 			},
 		},
 	})

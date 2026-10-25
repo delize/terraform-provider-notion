@@ -25,6 +25,15 @@ import (
 // is true, because releasing a hold is a compliance decision that shouldn't
 // follow from removing a block of Terraform.
 
+const (
+	// 2001-09-09 in epoch milliseconds. Smaller values are almost certainly
+	// epoch seconds.
+	minPlausibleEpochMillis = 1_000_000_000_000
+	// 2022-05-01T00:00:00Z, the earliest activity a hold can preserve
+	// according to the Help Center.
+	legalHoldEarliestLookback = 1_651_363_200_000
+)
+
 var (
 	_ resource.Resource                   = &LegalHoldResource{}
 	_ resource.ResourceWithImportState    = &LegalHoldResource{}
@@ -145,6 +154,24 @@ func (r *LegalHoldResource) ValidateConfig(ctx context.Context, req resource.Val
 			}
 		}
 	}
+	for _, d := range []struct {
+		attr string
+		v    types.Int64
+	}{{"start_date", cfg.StartDate}, {"end_date", cfg.EndDate}} {
+		if d.v.IsNull() || d.v.IsUnknown() {
+			continue
+		}
+		if d.v.ValueInt64() < minPlausibleEpochMillis {
+			resp.Diagnostics.AddAttributeError(path.Root(d.attr), "Date looks like seconds",
+				fmt.Sprintf("%s = %d is before 2001 when read as epoch milliseconds. Multiply epoch seconds by 1000.", d.attr, d.v.ValueInt64()))
+		}
+	}
+	if !cfg.StartDate.IsNull() && !cfg.StartDate.IsUnknown() && cfg.StartDate.ValueInt64() >= minPlausibleEpochMillis &&
+		cfg.StartDate.ValueInt64() < legalHoldEarliestLookback {
+		resp.Diagnostics.AddAttributeWarning(path.Root("start_date"), "Start date is before what a hold can preserve",
+			"Notion's Help Center says a hold reaches back no further than the workspace's Enterprise upgrade date or May 2022, "+
+				"so activity before that isn't preserved.")
+	}
 	if !cfg.StartDate.IsNull() && !cfg.StartDate.IsUnknown() && !cfg.EndDate.IsNull() && !cfg.EndDate.IsUnknown() &&
 		cfg.EndDate.ValueInt64() < cfg.StartDate.ValueInt64() {
 		resp.Diagnostics.AddAttributeError(path.Root("end_date"), "Invalid end date", "end_date is before start_date.")
@@ -201,6 +228,19 @@ func (r *LegalHoldResource) Create(ctx context.Context, req resource.CreateReque
 	resp.Diagnostics.Append(resp.State.Set(ctx, &plan)...)
 }
 
+// keepAppliedInt64 returns server unless an applied value exists and
+// differs, in which case it keeps applied and warns. See refresh.
+func keepAppliedInt64(applied, server types.Int64, attr string, diags *diag.Diagnostics) types.Int64 {
+	if applied.IsNull() || applied.IsUnknown() || applied.Equal(server) {
+		return server
+	}
+	diags.AddAttributeWarning(path.Root(attr), "Legal hold date differs in Notion",
+		fmt.Sprintf("Terraform applied %s = %s but Notion reports %s. State keeps the applied value so no replacement hold is planned. "+
+			"If Notion's value is about 1000 times smaller, the API expects seconds rather than milliseconds, so please report it.",
+			attr, applied, server))
+	return applied
+}
+
 // refresh reads the hold back into m. Config-owned fields keep the form the
 // user wrote (for example hyphenless IDs). Server-owned fields are replaced.
 // It returns false when the hold no longer exists.
@@ -227,13 +267,26 @@ func (r *LegalHoldResource) refresh(ctx context.Context, admin *adminClient, m *
 	m.Name = types.StringValue(h.Name)
 	m.Description = optionalString(m.Description, h.Description)
 	m.Icon = optionalString(m.Icon, h.Icon)
-	m.StartDate = types.Int64Value(int64(h.StartDate))
+	// start_date, end_date, and user_interaction_types force a new hold
+	// when they change. Notion doesn't document the date unit or whether it
+	// normalizes these values, so a value that comes back different from
+	// what was applied is kept as configured and reported as a warning,
+	// instead of failing the apply or planning a second hold. Import (no
+	// prior value) takes Notion's values.
+	serverEnd := types.Int64Null()
 	if h.EndDate != nil {
-		m.EndDate = types.Int64Value(int64(*h.EndDate))
-	} else {
-		m.EndDate = types.Int64Null()
+		serverEnd = types.Int64Value(int64(*h.EndDate))
 	}
-	m.UserInteractionTypes = stringsSet(h.UserInteractionType, diags)
+	m.StartDate = keepAppliedInt64(m.StartDate, types.Int64Value(int64(h.StartDate)), "start_date", diags)
+	m.EndDate = keepAppliedInt64(m.EndDate, serverEnd, "end_date", diags)
+	serverTypes := stringsSet(h.UserInteractionType, diags)
+	if m.UserInteractionTypes.IsNull() || m.UserInteractionTypes.IsUnknown() {
+		m.UserInteractionTypes = serverTypes
+	} else if !m.UserInteractionTypes.Equal(serverTypes) {
+		diags.AddAttributeWarning(path.Root("user_interaction_types"), "Legal hold activity types differ in Notion",
+			fmt.Sprintf("Terraform applied %s but Notion reports %s. State keeps the applied value so no replacement hold is planned. "+
+				"Check the hold in the organization console.", m.UserInteractionTypes, serverTypes))
+	}
 	prior := setStrings(ctx, m.UserIDs, diags)
 	m.UserIDs = stringsSet(alignIDs(users, prior), diags)
 	m.WorkspaceIDs = stringsSet(workspaces, diags)

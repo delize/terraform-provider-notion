@@ -2,6 +2,7 @@ package provider
 
 import (
 	"context"
+	"fmt"
 	"net/http"
 
 	"github.com/hashicorp/terraform-plugin-framework/action"
@@ -85,4 +86,11 @@ func (a *RevokeUserSessionsAction) Invoke(ctx context.Context, req action.Invoke
 		return
 	}
 	progress(resp, "Sessions for %s: %s", who, status)
+	// The response is only {"status":"revoked"}, so it can't show whether
+	// anyone was signed out. Accounts outside the organization's verified
+	// domains aren't managed users, and the Help Center says a logout call
+	// for one does nothing.
+	resp.Diagnostics.AddWarning("Check that the user is a managed user",
+		fmt.Sprintf("Notion accepted the session revoke for %s, but it only signs out managed users (accounts on the organization's verified domains). "+
+			"For any other account the call has no effect.", who))
 }
