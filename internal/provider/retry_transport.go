@@ -2,11 +2,14 @@ package provider
 
 import (
 	"bytes"
+	"context"
 	"crypto/rand"
 	"encoding/json"
 	"encoding/binary"
+	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"strconv"
 	"strings"
@@ -52,6 +55,12 @@ import (
 //     retrying. Replaying a non-idempotent write such as insert_content
 //     could duplicate content, so the response goes back to the caller.
 //     Edge HTML 504s are still retried, since those never reached the API.
+//   - A request marked with withNoReplay once it reached the API. That
+//     covers any JSON response and any transport error other than a failed
+//     dial. Creates such as a legal hold or an export have no idempotency
+//     key, so a resend after a server error could make a second one. Edge
+//     HTML errors and dial failures are still retried, since the request
+//     never got to Notion.
 //   - Requests whose body cannot be replayed (no GetBody set). For
 //     idempotent GET/HEAD/DELETE there's no body to replay; for
 //     POST/PATCH the SDK constructs requests with bytes.Buffer which
@@ -61,9 +70,10 @@ import (
 // Backoff
 //
 // Exponential with jitter, capped at maxDelay. If the response carries a
-// Retry-After header, we honour it (capped to maxDelay). maxDelay is 60s
-// because Notion's per-connection limit uses a fixed 60-second window and
-// caps Retry-After at 60 (2026-09-09).
+// Retry-After header, we honour it (capped to maxDelay). 429s, where Notion
+// sends Retry-After values up to 60s, are handled by the SDK and by
+// doNotionRequestWithVersion rather than here, so this cap only applies to
+// 5xx retries.
 type retryTransport struct {
 	next       http.RoundTripper // underlying transport; defaults to http.DefaultTransport
 	maxRetries int               // total attempts = maxRetries + 1
@@ -80,11 +90,11 @@ func newRetryHTTPClient() *http.Client {
 			next:       http.DefaultTransport,
 			maxRetries: 5,
 			baseDelay:  500 * time.Millisecond,
-			maxDelay:   60 * time.Second,
+			maxDelay:   30 * time.Second,
 		},
-		// Generous per-attempt timeout. The retry loop is bounded by
-		// maxRetries × maxDelay anyway, so this just keeps a single
-		// hung connection from holding things up forever.
+		// http.Client.Timeout covers the whole call, so every attempt and
+		// every backoff sleep share these 90 seconds. Retries stop when it
+		// runs out, even if maxRetries hasn't been reached.
 		Timeout: 90 * time.Second,
 	}
 }
@@ -134,12 +144,15 @@ func (rt *retryTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 
 		resp, err := rt.next.RoundTrip(req)
 		if err != nil {
+			if noReplay(req) && !isDialError(err) {
+				return nil, err
+			}
 			// Network/transport error — retry.
 			lastErr, lastResp = err, nil
 			continue
 		}
 
-		if isWriteGatewayTimeout(req, resp) || !shouldRetryResponse(resp) {
+		if isWriteGatewayTimeout(req, resp) || (noReplay(req) && isJSONResponse(resp)) || !shouldRetryResponse(resp) {
 			return resp, nil
 		}
 
@@ -153,6 +166,33 @@ func (rt *retryTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 		return lastResp, nil
 	}
 	return nil, lastErr
+}
+
+type noReplayKey struct{}
+
+// withNoReplay marks requests made with ctx as unsafe to resend once they
+// reached Notion. Use it for POSTs that create something and have no
+// idempotency key.
+func withNoReplay(ctx context.Context) context.Context {
+	return context.WithValue(ctx, noReplayKey{}, true)
+}
+
+func noReplay(req *http.Request) bool {
+	v, _ := req.Context().Value(noReplayKey{}).(bool)
+	return v
+}
+
+// isDialError reports whether err happened while connecting, before any of
+// the request was sent.
+func isDialError(err error) bool {
+	var opErr *net.OpError
+	return errors.As(err, &opErr) && opErr.Op == "dial"
+}
+
+// isJSONResponse reports whether resp came from the Notion API itself
+// rather than an edge error page.
+func isJSONResponse(resp *http.Response) bool {
+	return strings.HasPrefix(strings.ToLower(resp.Header.Get("Content-Type")), "application/json")
 }
 
 // shouldRetryResponse returns true if a response represents a transient

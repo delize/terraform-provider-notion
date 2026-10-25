@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -479,5 +480,87 @@ func TestRetryTransport_RetriesEdgeHTML504OnWrite(t *testing.T) {
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK || attempts.Load() != 2 {
 		t.Errorf("got status %d after %d attempts, want 200 after 2", resp.StatusCode, attempts.Load())
+	}
+}
+
+// A create marked withNoReplay must not be resent after Notion's API
+// answered with a server error, but an edge HTML error still retries.
+func TestRetryTransport_NoReplay(t *testing.T) {
+	cases := []struct {
+		name         string
+		contentType  string
+		body         string
+		marked       bool
+		wantAttempts int32
+	}{
+		{"marked JSON 500 is returned", "application/json", `{"object":"error","code":"internal_server_error"}`, true, 1},
+		{"unmarked JSON 500 retries", "application/json", `{"object":"error","code":"internal_server_error"}`, false, 3},
+		{"marked edge HTML 502 retries", "text/html", "<html>502</html>", true, 3},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			var attempts atomic.Int32
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if attempts.Add(1) < 3 {
+					w.Header().Set("Content-Type", tc.contentType)
+					w.WriteHeader(http.StatusInternalServerError)
+					_, _ = w.Write([]byte(tc.body))
+					return
+				}
+				w.Header().Set("Content-Type", "application/json")
+				_, _ = w.Write([]byte(`{"id":"hold-1"}`))
+			}))
+			t.Cleanup(srv.Close)
+
+			ctx := context.Background()
+			if tc.marked {
+				ctx = withNoReplay(ctx)
+			}
+			req, _ := http.NewRequestWithContext(ctx, http.MethodPost, srv.URL, strings.NewReader(`{"name":"x"}`))
+			resp, err := (&http.Client{Transport: newTestTransport()}).Do(req)
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			resp.Body.Close()
+			if got := attempts.Load(); got != tc.wantAttempts {
+				t.Errorf("attempts: got %d, want %d", got, tc.wantAttempts)
+			}
+		})
+	}
+}
+
+// A marked request still retries when the connection was never made.
+func TestRetryTransport_NoReplayRetriesDialErrors(t *testing.T) {
+	var attempts atomic.Int32
+	rt := newTestTransport()
+	rt.next = roundTripperFunc(func(r *http.Request) (*http.Response, error) {
+		if attempts.Add(1) < 2 {
+			return nil, &net.OpError{Op: "dial", Net: "tcp", Err: fmt.Errorf("connection refused")}
+		}
+		return &http.Response{StatusCode: 200, Header: http.Header{"Content-Type": {"application/json"}}, Body: io.NopCloser(strings.NewReader(`{}`)), Request: r}, nil
+	})
+	req, _ := http.NewRequestWithContext(withNoReplay(context.Background()), http.MethodPost, "http://notion.invalid/v1/legal_holds", strings.NewReader(`{}`))
+	resp, err := rt.RoundTrip(req)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	resp.Body.Close()
+	if got := attempts.Load(); got != 2 {
+		t.Errorf("attempts: got %d, want 2", got)
+	}
+
+	// Any other transport error might have happened after the body was
+	// sent, so it is returned without a resend.
+	attempts.Store(0)
+	rt.next = roundTripperFunc(func(r *http.Request) (*http.Response, error) {
+		attempts.Add(1)
+		return nil, io.ErrUnexpectedEOF
+	})
+	req, _ = http.NewRequestWithContext(withNoReplay(context.Background()), http.MethodPost, "http://notion.invalid/v1/legal_holds", strings.NewReader(`{}`))
+	if _, err := rt.RoundTrip(req); err == nil {
+		t.Fatal("expected the EOF to be returned")
+	}
+	if got := attempts.Load(); got != 1 {
+		t.Errorf("attempts after EOF: got %d, want 1", got)
 	}
 }

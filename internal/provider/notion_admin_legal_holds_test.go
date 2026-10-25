@@ -106,6 +106,12 @@ func (f *fakeAdminAPI) serveLegalHolds(w http.ResponseWriter, r *http.Request, p
 			}
 			f.writeJSON(w, map[string]interface{}{"legal_holds": holds})
 		case http.MethodPost:
+			n, _ := f.areaState["legalHoldCreatePosts"].(int)
+			f.areaState["legalHoldCreatePosts"] = n + 1
+			if fail, _ := f.areaState["legalHoldCreateFails"].(bool); fail {
+				f.writeErr(w, 500, "internal_server_error", "Injected create failure.")
+				return true
+			}
 			f.nextID++
 			h := &fakeLegalHold{ID: fmt.Sprintf("hold-%d", f.nextID), Status: "active", Users: map[string]bool{}}
 			h.Name, _ = body["name"].(string)
@@ -458,6 +464,24 @@ func TestUnitLegalHold_CreateReadBackFailureKeepsHold(t *testing.T) {
 				t.Fatalf("expected exactly one hold, got %d", len(f.legalHolds))
 			}
 		})
+	}
+}
+
+// Notion may have saved a hold before answering 500, and the create has no
+// idempotency key, so the provider must not resend it.
+func TestUnitLegalHold_CreateNotResentAfterServerError(t *testing.T) {
+	f := newFakeAdminAPIWithLegalHolds(t)
+	f.areaState["legalHoldCreateFails"] = true
+	prov := adminOnlyProvider(t, f.token)
+	resource.UnitTest(t, resource.TestCase{
+		ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
+		Steps: []resource.TestStep{{
+			Config:      legalHoldConfig(prov, "Case 11", "", []string{"u1"}, false),
+			ExpectError: regexp.MustCompile(`Error creating legal hold`),
+		}},
+	})
+	if n, _ := f.areaState["legalHoldCreatePosts"].(int); n != 1 {
+		t.Fatalf("legal hold create was sent %d times, want 1", n)
 	}
 }
 

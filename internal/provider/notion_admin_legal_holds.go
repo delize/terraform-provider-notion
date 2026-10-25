@@ -82,7 +82,7 @@ func (c *adminClient) GetLegalHold(ctx context.Context, id string) (*adminLegalH
 
 func (c *adminClient) CreateLegalHold(ctx context.Context, req legalHoldCreate) (*adminLegalHold, error) {
 	var h adminLegalHold
-	if err := c.do(ctx, http.MethodPost, "/v1/legal_holds", nil, req, &h); err != nil {
+	if err := c.do(withNoReplay(ctx), http.MethodPost, "/v1/legal_holds", nil, req, &h); err != nil {
 		return nil, err
 	}
 	return &h, nil
@@ -139,7 +139,7 @@ func (c *adminClient) ExportLegalHold(ctx context.Context, id, requestingUserID,
 	var out struct {
 		LegalHoldExportID string `json:"legal_hold_export_id"`
 	}
-	if err := c.do(ctx, http.MethodPost, legalHoldPath(id, "export"), nil, body, &out); err != nil {
+	if err := c.do(withNoReplay(ctx), http.MethodPost, legalHoldPath(id, "export"), nil, body, &out); err != nil {
 		return "", err
 	}
 	return out.LegalHoldExportID, nil

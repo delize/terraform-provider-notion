@@ -307,7 +307,7 @@ func (c *adminClient) GetGroup(ctx context.Context, spaceID, groupID string) (*a
 
 func (c *adminClient) CreateGroup(ctx context.Context, spaceID, name string) (*adminGroup, error) {
 	var g adminGroup
-	if err := c.do(ctx, http.MethodPost, adminSpacePath(spaceID, "groups"), nil, map[string]string{"name": name}, &g); err != nil {
+	if err := c.do(withNoReplay(ctx), http.MethodPost, adminSpacePath(spaceID, "groups"), nil, map[string]string{"name": name}, &g); err != nil {
 		return nil, err
 	}
 	return &g, nil
