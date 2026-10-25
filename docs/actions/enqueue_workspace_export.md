@@ -37,7 +37,7 @@ terraform apply -invoke=action.notion_enqueue_workspace_export.monthly_backup
 ### Optional
 
 - `collection_view_export_type` (String) `all` or `currentView`.
-- `flatten_export_filetree` (Boolean)
+- `flatten_export_filetree` (Boolean) Puts every file in one folder instead of nesting subpages in folders. This appears to match unchecking "Create folders for subpages" in the export dialog, which the Help Center suggests for Windows' 260-character path limit.
 - `include_comments` (Boolean)
 - `include_contents` (String) `everything` or `no_files`.
 - `locale` (String)
@@ -45,3 +45,9 @@ terraform apply -invoke=action.notion_enqueue_workspace_export.monthly_backup
 - `time_zone` (String)
 
 The reference lists these options without describing them further, so their effect is as Notion's export dialog describes it.
+
+From the [Help Center](https://www.notion.com/help/export-your-content):
+
+- The export runs as `on_behalf_of_user_email`, and pages that user can't access, such as other members' private pages, are left out. Teamspace settings can exclude more.
+- Large workspaces can take up to 30 hours to export.
+- Workspace owners can turn exports off under Settings, Security, "Disable export".

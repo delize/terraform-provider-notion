@@ -9,7 +9,7 @@ description: |-
 
 Reads the status of a workspace export started with the `notion_enqueue_workspace_export` action, through the [Admin API](https://developers.notion.com/reference/admin/get-space-export-status). Needs `admin_token` with the `workspace:export` scope.
 
-`download_urls` is marked sensitive, because anyone holding a URL can download the export until `url_expires_time`.
+`download_urls` is marked sensitive, because anyone holding a URL can download the export until `url_expires_time`. The Help Center says export links from the settings UI expire after 7 days. Use `url_expires_time` for the actual deadline.
 
 ## Example Usage
 

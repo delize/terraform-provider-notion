@@ -13,7 +13,15 @@ Manages an organization legal hold and the users under it through the [Admin API
 
 The API has no way to change a hold's dates or preserved activity types, so changing `start_date`, `end_date`, or `user_interaction_types` creates a new hold. With the default `release_on_destroy = false`, the old hold stays active.
 
-Dates are numbers. The legal hold reference doesn't state a unit, and the provider passes them through as epoch milliseconds, the unit every other Admin API endpoint documents.
+Dates are numbers. Neither the legal hold reference nor the [Help Center article](https://www.notion.com/help/legal-holds) states a unit, and the provider passes them through as epoch milliseconds, the unit every other Admin API endpoint documents.
+
+What the Help Center adds:
+
+- Holds created through the API work like holds made in organization settings (Manage organization, Data & Compliance, Legal holds) and show up in the same list.
+- A hold covers every workspace in the organization. It can reach back to the workspace's Enterprise upgrade date or May 2022, so an earlier `start_date` preserves nothing extra.
+- `user_ids` can include workspace owners, members, and guests, plus users removed after August 1, 2024.
+- The settings page offers three scopes, which correspond to these `user_interaction_types` values: "Created only" is `page.created`, "Edited & created" adds `page.edited`, and "Viewed, edited & created" adds `page.viewed`.
+- Releasing a hold removes its users and turns the normal retention settings back on for the held pages. Hold creation, release, membership changes, and exports appear in the audit log.
 
 ## Example Usage
 

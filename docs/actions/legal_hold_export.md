@@ -9,7 +9,7 @@ description: |-
 
 Starts an export of a legal hold's content for one workspace, or continues an earlier export, through the [Admin API](https://developers.notion.com/reference/admin/export-legal-hold). Needs Terraform 1.14 or later and `admin_token` with the `legal-hold:export` scope.
 
-Actions run only when invoked, never during plan or destroy. The export ID Notion returns appears as a progress message, since actions have no outputs. The reference doesn't describe how the export is delivered.
+Actions run only when invoked, never during plan or destroy. The export ID Notion returns appears as a progress message, since actions have no outputs. The API reference doesn't describe how the export is delivered. In the settings UI, according to the [Help Center](https://www.notion.com/help/legal-holds), PDF exports of page content are downloaded from the hold's Exports list and stay valid for 30 days, while CSV metadata exports arrive as an email link. Expect an API export to land in the same Exports list, though Notion doesn't say so directly.
 
 ## Example Usage
 

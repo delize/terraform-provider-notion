@@ -11,7 +11,9 @@ Manages an admin-managed permission group in a Notion workspace through the [Adm
 
 Group names must be unique among active groups, compared exactly and case-sensitively. Creating or renaming to a name that's taken fails with a `409 conflict_error`.
 
-SCIM-managed groups can be imported and read, but Notion refuses to rename or delete them. Change those in the identity provider.
+SCIM-managed groups can be imported and read, but Notion refuses to rename or delete them. Change those in the identity provider. In Settings they carry a "Synced" label, and the [Help Center](https://www.notion.com/help/create-and-manage-groups) warns that changes made in the identity provider can overwrite edits made in Notion.
+
+Deleting a group can fail with a `409 conflict_error` when it would leave pages with no one who has access. Set `transfer_to_owner_id` to a workspace owner who should inherit that access, apply, then destroy again.
 
 ## Example Usage
 

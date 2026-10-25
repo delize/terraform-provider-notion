@@ -9,6 +9,8 @@ description: |-
 
 Deletes a custom agent, moving it to Trash, through the [Admin API](https://developers.notion.com/reference/admin/delete-agent). Needs Terraform 1.14 or later and `admin_token` with the `workflows:write` scope. The personal agent (Notion AI) isn't supported. It runs only when invoked.
 
+Notion keeps a deleted agent's setup so it can be recovered if needed ([Help Center](https://www.notion.com/help/manage-custom-agents-with-the-admin-api)). To pause an agent instead, set `admin_status = "disabled"` on `notion_admin_agent_settings`.
+
 ## Example Usage
 
 ```terraform
