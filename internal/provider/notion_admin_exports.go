@@ -88,7 +88,9 @@ func (a *WorkspaceExportAction) Metadata(_ context.Context, req action.MetadataR
 }
 
 func (a *WorkspaceExportAction) Schema(_ context.Context, _ action.SchemaRequest, resp *action.SchemaResponse) {
-	opt := func(desc string) actionschema.StringAttribute { return actionschema.StringAttribute{Description: desc, Optional: true} }
+	opt := func(desc string) actionschema.StringAttribute {
+		return actionschema.StringAttribute{Description: desc, Optional: true}
+	}
 	resp.Schema = actionschema.Schema{
 		Description: "Starts an export of a workspace through the Admin API. The export job ID is reported as a progress message. " +
 			"Read its progress and download URLs with the notion_workspace_export_status data source. Requires admin_token with the workspace:export scope.",
@@ -188,8 +190,12 @@ func (d *WorkspaceExportStatusDataSource) Metadata(_ context.Context, req dataso
 }
 
 func (d *WorkspaceExportStatusDataSource) Schema(_ context.Context, _ datasource.SchemaRequest, resp *datasource.SchemaResponse) {
-	str := func(desc string) dsschema.StringAttribute { return dsschema.StringAttribute{Description: desc, Computed: true} }
-	num := func(desc string) dsschema.Int64Attribute { return dsschema.Int64Attribute{Description: desc, Computed: true} }
+	str := func(desc string) dsschema.StringAttribute {
+		return dsschema.StringAttribute{Description: desc, Computed: true}
+	}
+	num := func(desc string) dsschema.Int64Attribute {
+		return dsschema.Int64Attribute{Description: desc, Computed: true}
+	}
 	resp.Schema = dsschema.Schema{
 		Description: "Reads the status of a workspace export started with notion_enqueue_workspace_export, through the Admin API. Requires admin_token with the workspace:export scope.",
 		Attributes: map[string]dsschema.Attribute{

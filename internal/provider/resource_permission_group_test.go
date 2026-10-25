@@ -143,3 +143,45 @@ data "notion_admin_users" "ws" {
 		}},
 	})
 }
+
+// TestAccAdminReadOnlyDataSources reads the other Admin API areas without
+// changing anything. Each area needs its own read scope on the token
+// (legal-hold:read, workflows:read, mcp-client-connection:read,
+// personal-access-token:read). The mutating resources and actions in those
+// areas (legal holds, agent settings, revocations, exports) have no
+// acceptance tests, because they would create compliance records or cut
+// off real access in the test organization.
+func TestAccAdminReadOnlyDataSources(t *testing.T) {
+	ws := adminAccPreCheck(t)
+	resource.Test(t, resource.TestCase{
+		ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
+		Steps: []resource.TestStep{{
+			Config: fmt.Sprintf(`
+data "notion_legal_holds" "all" {}
+
+data "notion_admin_agents" "ws" {
+  workspace_id = %[1]q
+}
+
+data "notion_admin_agents_credit_usage" "ws" {
+  workspace_id = %[1]q
+}
+
+data "notion_mcp_client_connections" "ws" {
+  workspace_ids = [%[1]q]
+}
+
+data "notion_personal_access_tokens" "ws" {
+  workspace_id = %[1]q
+}
+`, ws),
+			Check: resource.ComposeAggregateTestCheckFunc(
+				resource.TestCheckResourceAttrSet("data.notion_legal_holds.all", "legal_holds.#"),
+				resource.TestCheckResourceAttrSet("data.notion_admin_agents.ws", "agents.#"),
+				resource.TestCheckResourceAttrSet("data.notion_admin_agents_credit_usage.ws", "agents.#"),
+				resource.TestCheckResourceAttrSet("data.notion_mcp_client_connections.ws", "connections.#"),
+				resource.TestCheckResourceAttrSet("data.notion_personal_access_tokens.ws", "tokens.#"),
+			),
+		}},
+	})
+}

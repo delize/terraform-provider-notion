@@ -185,7 +185,8 @@ func (r *AdminWorkspaceAgentSettingsResource) Read(ctx context.Context, req reso
 }
 
 // Delete leaves both settings as they are.
-func (r *AdminWorkspaceAgentSettingsResource) Delete(context.Context, resource.DeleteRequest, *resource.DeleteResponse) {}
+func (r *AdminWorkspaceAgentSettingsResource) Delete(context.Context, resource.DeleteRequest, *resource.DeleteResponse) {
+}
 
 func (r *AdminWorkspaceAgentSettingsResource) ImportState(ctx context.Context, req resource.ImportStateRequest, resp *resource.ImportStateResponse) {
 	resp.Diagnostics.Append(resp.State.SetAttribute(ctx, path.Root("id"), types.StringValue(req.ID))...)

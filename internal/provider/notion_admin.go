@@ -427,8 +427,8 @@ type missingTokenTransport struct{}
 
 func (missingTokenTransport) RoundTrip(*http.Request) (*http.Response, error) {
 	return nil, errors.New("no Notion API token is configured. This provider block only sets admin_token, " +
-		"which covers the Admin API resources (notion_permission_group, notion_permission_group_member, " +
-		"notion_permission_groups, notion_admin_users, notion_workspaces). Set token or NOTION_TOKEN to use other resources")
+		"which covers the Admin API resources, data sources, and actions (permission groups, legal holds, agents, " +
+		"MCP connections, personal access tokens, workspaces, exports). Set token or NOTION_TOKEN to use other resources")
 }
 
 // providerDataFrom extracts the *notionapi.Client every resource receives.

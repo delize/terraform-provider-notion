@@ -369,7 +369,8 @@ func (r *AdminAgentSettingsResource) Read(ctx context.Context, req resource.Read
 }
 
 // Delete leaves the agent and its settings untouched.
-func (r *AdminAgentSettingsResource) Delete(context.Context, resource.DeleteRequest, *resource.DeleteResponse) {}
+func (r *AdminAgentSettingsResource) Delete(context.Context, resource.DeleteRequest, *resource.DeleteResponse) {
+}
 
 func (r *AdminAgentSettingsResource) ImportState(ctx context.Context, req resource.ImportStateRequest, resp *resource.ImportStateResponse) {
 	parts := strings.Split(req.ID, "/")

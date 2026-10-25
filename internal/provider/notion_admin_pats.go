@@ -94,8 +94,12 @@ func (d *PATsDataSource) Metadata(_ context.Context, req datasource.MetadataRequ
 }
 
 func (d *PATsDataSource) Schema(_ context.Context, _ datasource.SchemaRequest, resp *datasource.SchemaResponse) {
-	str := func(desc string) dsschema.StringAttribute { return dsschema.StringAttribute{Description: desc, Computed: true} }
-	num := func(desc string) dsschema.Int64Attribute { return dsschema.Int64Attribute{Description: desc, Computed: true} }
+	str := func(desc string) dsschema.StringAttribute {
+		return dsschema.StringAttribute{Description: desc, Computed: true}
+	}
+	num := func(desc string) dsschema.Int64Attribute {
+		return dsschema.Int64Attribute{Description: desc, Computed: true}
+	}
 	resp.Schema = dsschema.Schema{
 		Description: "Lists personal access token records in a workspace through the Admin API. Token values are never returned. " +
 			"Requires admin_token with the personal-access-token:read scope.",

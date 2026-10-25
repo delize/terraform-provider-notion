@@ -43,8 +43,8 @@ type fakeAdminAPI struct {
 func newFakeAdminAPI(t *testing.T) (*fakeAdminAPI, *httptest.Server) {
 	t.Helper()
 	f := &fakeAdminAPI{
-		t:       t,
-		token:   "adm_test",
+		t:          t,
+		token:      "adm_test",
 		groups:     map[string]string{},
 		members:    map[string]map[string]string{},
 		legalHolds: map[string]*fakeLegalHold{},
