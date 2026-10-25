@@ -48,7 +48,7 @@ Set at most one of `icon` (an emoji), `icon_name` with optional `icon_color` (a 
 
 Notion returns native icons by their internal name. Picker names such as `star circle` are accepted on write but read back as the internal name (`token`), which shows as a diff, so configure the internal name. URLs from Notion's own icon set, such as `https://www.notion.so/icons/pizza_blue.svg`, are rejected in `icon_url` because Notion stores them as native icons. Use `icon_name` and `icon_color` instead.
 
-Only the icon attributes you configure are tracked. An icon someone sets in the Notion UI on a page that doesn't configure one is left alone.
+A native icon, image, or custom emoji someone sets in the Notion UI on a page that doesn't configure one is left alone. An emoji works differently, because `icon` defaults to an empty string. Terraform shows a UI-set emoji as a diff and removes it on the next apply, so set `icon` to the emoji if you want to keep it. `notion_database` doesn't have this default and leaves a UI-set emoji alone.
 
 ## Schema
 
@@ -61,7 +61,7 @@ Only the icon attributes you configure are tracked. An icon someone sets in the 
 
 ### Optional
 
-- `icon` (String) Emoji icon for the page. Conflicts with the other icon attributes.
+- `icon` (String) Emoji icon for the page. Defaults to an empty string, so an emoji set in the Notion UI is removed on the next apply unless it's configured here. Conflicts with the other icon attributes.
 - `icon_name` (String) Native Notion icon name, such as `pizza`. Use the internal name Notion returns.
 - `icon_color` (String) Color of the native icon: `gray` (default), `lightgray`, `brown`, `yellow`, `orange`, `green`, `blue`, `purple`, `pink`, or `red`. Requires `icon_name`.
 - `icon_url` (String) External image URL for the icon. Notion icon-set URLs are rejected.
