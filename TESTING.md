@@ -39,6 +39,9 @@ Optional, gates specific tests:
 | `NOTION_TEST_VIEW_ID` | `TestAccViewQueryDataSource` | An existing view ID to query. Typically copy this from a prior `TestAccViewResource` run. |
 | `NOTION_TEST_TEMPLATE_ID` | `TestAccPageWithTemplate` | A Notion template page ID the integration can access. Without this the test skips. |
 | `NOTION_TEST_AGENT_ID` | `TestAccAgentSettingsResource`, `TestAccAgentDataSources` | ID of a throwaway Custom Agent the token has full access to. The resource test disables and re-enables it and changes its credit limit. |
+| `NOTION_ADMIN_TOKEN` | Admin API acceptance tests | Organization bot token (Enterprise) with `permission-group:read`, `permission-group:write`, `workspace:read`, `user:read`, and for the read-only test `legal-hold:read`, `workflows:read`, `mcp-client-connection:read`, `personal-access-token:read`. |
+| `NOTION_TEST_ADMIN_WORKSPACE_ID` | Admin API acceptance tests | Workspace ID where test groups are created and deleted and listings are read. |
+| `NOTION_TEST_ADMIN_USER_ID` | `TestAccPermissionGroupMemberResource` | A full workspace member (not a guest) the test adds to and removes from a test group. |
 | `GITHUB_PR_NUMBER` | (all CI) | Suffix added to ephemeral page titles so debris is identifiable. CI sets this automatically. |
 
 ## What's tested
@@ -69,6 +72,12 @@ Optional, gates specific tests:
 | `notion_agent`, `notion_agents`, `notion_agent_insights` (beta) | `TestAccAgentDataSources` | Requires `NOTION_TEST_AGENT_ID`. Read-only. |
 | Agent API shim, status and drift rules, config validation | `TestGetAgent*`, `TestUpdateAgent*`, `TestQueryAgents_*`, `TestGetAgentInsights_*`, `TestStatusChangeNeeded`, `TestEnabledFromAgent`, `TestBuildAgentsQuery`, `TestUnitAgent*` | Unit tests against `httptest`, plus plan-only checks through real Terraform. |
 | Retry transport, silent body injection, status schema parsing | `TestRetryTransport_*`, `TestNotificationsTransport_*`, `TestParseStatusProperty_*` | Unit tests against `httptest` servers and fixtures. |
+| Admin API permission groups, users, workspaces | `TestAdminClient_*`, `TestUnitPermissionGroup_Lifecycle`, `TestUnitPermissionGroupMember_DriftRecreates`, `TestUnitAdminDataSources`, `TestUnitAdmin_*`, `TestUnitProvider_NoTokens` | Real Terraform against an in-memory fake Admin API that follows the documented paths, list envelopes, and error bodies, with forced pagination. Covers create, in-place updates, import, drift, destroy, admin-only provider blocks, and missing-token errors. |
+| Admin API legal holds | `TestUnitLegalHold_*` | Lifecycle with an in-place rename and user swap, destroy keeps the hold by default, `release_on_destroy`, both data sources, and the export action fired from a `terraform_data` `action_trigger`. |
+| Admin API agents | `TestUnitAdminAgentSettings_Lifecycle`, `TestUnitAdminWorkspaceAgentSettings`, `TestUnitAdminAgentDataSourcesAndDeleteAction`, `TestUnitAdminAgent_Validation` | Authoritative sharing including drift removal, credit limit cleared with null, destroy leaves the agent and settings untouched, multi-page credit periods, and the delete action. |
+| Admin API MCP connections | `TestUnitMCPEnterpriseAccess_*`, `TestUnitMCPConnectionsAndRevokeAction` | Destroy keeps a denial by default, `restore_on_destroy`, bracket-encoded filters, and the revoke action. |
+| Admin API PATs, exports, sessions | `TestUnitPATsDataSource*`, `TestUnitWorkspaceExport*`, `TestUnitRevokeUserSessionsAction*` | Filters and nullable fields, the revoke and enqueue actions, and request bodies that omit unset options. |
+| Admin API against a real organization | `TestAccPermissionGroupResource`, `TestAccPermissionGroupMemberResource`, `TestAccAdminDataSources`, `TestAccAdminReadOnlyDataSources` | Skip without `NOTION_ADMIN_TOKEN` and `NOTION_TEST_ADMIN_WORKSPACE_ID`. The read-only test lists legal holds, agents, MCP connections, and PATs. |
 | `notion_view` | `TestAccViewResource` | Create + rename + import-verify. Skips when the workspace's API doesn't return a `data_sources` array on database GET (pre-v2025-09-03). |
 | `notion_view_query` | `TestAccViewQueryDataSource` | Requires `NOTION_TEST_VIEW_ID`. |
 
@@ -78,7 +87,7 @@ Optional, gates specific tests:
 |---|---|
 | `request_status.type="incomplete"` warning on `notion_database_entries` (2026-04-20) | Triggering the 10K pagination cap requires populating 10K+ entries in a test database, which is impractical for an acceptance test. The diagnostic-emit path is small and visually verified. |
 | `agent_id` parent type warning on `notion_page.Read` (2026-05-11) | Pages parented by an agent can only come into existence through Notion's AI/agent feature; we can't synthesize that state from this provider. The fallthrough is a single `AddWarning` call. |
-| `heading_4` / `tabs` / `tab` block builder error path | Intentional error case for SDK-gap block types — exercising it would just assert the error message, which is fragile and low-value. |
+| Admin API legal holds, agent settings, MCP access, and every action against a real organization | Running them for real would create compliance records, change agent governance, or cut off access in the test organization. The fake-server tests cover them. |
 | Bot IDs in people properties / user mentions (2026-06-10) | The provider doesn't currently write people-property values or rich-text mentions; this changelog item is a docs note. |
 | OAuth fresh token pair (2026-06-08) | OAuth flow happens entirely outside this provider; nothing to test. |
 | AI meeting notes data source on plan-gated workspaces | The endpoint returns 400 `validation_error` when the workspace's plan doesn't include AI meeting notes. The tests probe and skip in that case rather than failing — a real user with a non-AI workspace using the data source still surfaces the error correctly. |
@@ -92,6 +101,8 @@ If you can only run a subset, here's what each unlocks:
 - `+ NOTION_TEST_VIEW_DATABASE_ID` → view resource (requires v2025-09-03 API)
 - `+ NOTION_TEST_VIEW_ID` → view query data source
 - `+ NOTION_TEST_TEMPLATE_ID` → templated page creation
+- `+ NOTION_TEST_AGENT_ID` → agent settings and agent data sources (changes a real agent)
+- `NOTION_ADMIN_TOKEN` + `NOTION_TEST_ADMIN_WORKSPACE_ID` → Admin API permission groups and read-only admin listings (Enterprise only)
 
 ## Cleanup
 
