@@ -137,6 +137,17 @@ func (f *fakeAdminAPI) serveLegalHolds(w http.ResponseWriter, r *http.Request, p
 	}
 	switch {
 	case len(parts) == 3 && r.Method == http.MethodGet:
+		// Tests can make the next GETs fail, to mimic a read-back that
+		// lags behind the create or errors.
+		if n, _ := f.areaState["legalHoldGetFailures"].(int); n > 0 {
+			f.areaState["legalHoldGetFailures"] = n - 1
+			status, _ := f.areaState["legalHoldGetFailStatus"].(int)
+			if status == 0 {
+				status = 404
+			}
+			f.writeErr(w, status, "test_failure", "Injected read-back failure.")
+			return true
+		}
 		f.writeJSON(w, h.json())
 	case len(parts) == 3 && r.Method == http.MethodPatch:
 		if v, ok := body["name"].(string); ok {
@@ -410,6 +421,43 @@ func TestUnitLegalHold_ServerNormalizedValuesKeepApplied(t *testing.T) {
 	})
 	if len(f.legalHolds) != 1 {
 		t.Fatalf("expected exactly one hold, got %d", len(f.legalHolds))
+	}
+}
+
+// A hold that Notion created must land in state even when reading it back
+// right away fails. Otherwise Terraform taints it, and the replacement
+// leaves a second active hold behind.
+func TestUnitLegalHold_CreateReadBackFailureKeepsHold(t *testing.T) {
+	for name, status := range map[string]int{"not found": 404, "error": 403} {
+		t.Run(name, func(t *testing.T) {
+			f := newFakeAdminAPIWithLegalHolds(t)
+			f.areaState["legalHoldGetFailures"] = 1
+			f.areaState["legalHoldGetFailStatus"] = status
+			prov := adminOnlyProvider(t, f.token)
+			cfg := legalHoldConfig(prov, "Case 10", "", []string{"u1"}, false)
+
+			resource.UnitTest(t, resource.TestCase{
+				ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
+				Steps: []resource.TestStep{
+					{
+						Config: cfg,
+						Check: resource.ComposeAggregateTestCheckFunc(
+							resource.TestCheckResourceAttr("notion_legal_hold.case", "status", "active"),
+							resource.TestCheckResourceAttrSet("notion_legal_hold.case", "id"),
+						),
+					},
+					{
+						Config: cfg,
+						ConfigPlanChecks: resource.ConfigPlanChecks{
+							PreApply: []plancheck.PlanCheck{plancheck.ExpectEmptyPlan()},
+						},
+					},
+				},
+			})
+			if len(f.legalHolds) != 1 {
+				t.Fatalf("expected exactly one hold, got %d", len(f.legalHolds))
+			}
+		})
 	}
 }
 

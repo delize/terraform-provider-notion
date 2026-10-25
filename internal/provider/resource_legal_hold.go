@@ -224,7 +224,33 @@ func (r *LegalHoldResource) Create(ctx context.Context, req resource.CreateReque
 		return
 	}
 	plan.ID = types.StringValue(h.ID)
-	r.refresh(ctx, admin, &plan, &resp.Diagnostics)
+	// Fill the server-owned fields from the create response first, so state
+	// can be saved even when the read-back below fails.
+	plan.Status = types.StringValue(h.Status)
+	plan.CreatedBy = types.StringValue(h.CreatedBy)
+	plan.CreatedTime = types.Int64Value(int64(h.CreatedTime))
+	plan.WorkspaceIDs = stringsSet(h.Workspaces.IDs, &resp.Diagnostics)
+
+	// The hold exists from here on. A read-back that fails or can't find it
+	// yet only gets a warning. An error would taint the hold, and because
+	// destroy doesn't release holds by default, the replacement would leave
+	// a second active hold.
+	refreshed := plan
+	var readDiags diag.Diagnostics
+	found := r.refresh(ctx, admin, &refreshed, &readDiags)
+	switch {
+	case readDiags.HasError():
+		for _, d := range readDiags.Errors() {
+			resp.Diagnostics.AddWarning("Legal hold created but not read back",
+				fmt.Sprintf("Notion created legal hold %s, but reading it back failed: %s. State uses the create response, and the next refresh reads it again.", h.ID, d.Detail()))
+		}
+	case !found:
+		resp.Diagnostics.AddWarning("Legal hold created but not found yet",
+			fmt.Sprintf("Notion created legal hold %s, but reading it back right away returned not found. State uses the create response, and the next refresh reads it again.", h.ID))
+	default:
+		plan = refreshed
+		resp.Diagnostics.Append(readDiags...)
+	}
 	resp.Diagnostics.Append(resp.State.Set(ctx, &plan)...)
 }
 
