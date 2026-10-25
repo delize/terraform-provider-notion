@@ -100,7 +100,8 @@ func (r *PageResource) Schema(_ context.Context, _ resource.SchemaRequest, resp 
 				},
 			},
 			"icon": schema.StringAttribute{
-				Description: "Emoji icon for the page. Conflicts with icon_name, icon_url, and icon_custom_emoji_id.",
+				Description: "Emoji icon for the page. Defaults to an empty string, so an emoji set in the Notion UI is removed on the next apply unless it's configured here. " +
+					"Conflicts with icon_name, icon_url, and icon_custom_emoji_id.",
 				Optional:    true,
 				Computed:    true,
 				Default:     stringdefault.StaticString(""),
@@ -246,13 +247,19 @@ func (r *PageResource) Create(ctx context.Context, req resource.CreateRequest, r
 	default:
 		r.createWithoutMarkdown(ctx, &plan, resp)
 	}
-	if resp.Diagnostics.HasError() {
+	if plan.ID.IsUnknown() || plan.ID.ValueString() == "" {
 		return
 	}
 
-	r.applyCreateExtras(ctx, &plan, &resp.Diagnostics)
-	if resp.Diagnostics.HasError() {
-		return
+	if !resp.Diagnostics.HasError() {
+		r.applyCreateExtras(ctx, &plan, &resp.Diagnostics)
+	}
+	// The page exists from here on, so save it even when a later step
+	// failed. With an error, Terraform marks it tainted and replaces it on
+	// the next apply. Returning without state would orphan the page and the
+	// next apply would create a duplicate.
+	if plan.IsLocked.IsUnknown() {
+		plan.IsLocked = types.BoolValue(false)
 	}
 	resp.Diagnostics.Append(resp.State.Set(ctx, &plan)...)
 }
@@ -266,6 +273,13 @@ func (r *PageResource) position(plan *PageResourceModel) map[string]interface{} 
 // template, markdown, and plain paths don't each need their own icon logic.
 // Locking runs last, after any markdown_insert.
 func (r *PageResource) applyCreateExtras(ctx context.Context, plan *PageResourceModel, diags *diag.Diagnostics) {
+	lockSet := !plan.IsLocked.IsNull() && !plan.IsLocked.IsUnknown()
+	if !plan.iconFields().managed() && !lockSet {
+		// Nothing to change. A new page starts unlocked, so skip the extra
+		// request.
+		plan.IsLocked = types.BoolValue(false)
+		return
+	}
 	token, err := tokenForClient(r.client)
 	if err != nil {
 		diags.AddError("Error setting page icon or lock", err.Error())

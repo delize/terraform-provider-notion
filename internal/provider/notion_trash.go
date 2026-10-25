@@ -22,8 +22,11 @@ import (
 // calls that use `in_trash` and a recent Notion-Version header, so deletes
 // behave correctly until the upstream SDK catches up.
 
+// notionAPIBaseURL is a variable so unit tests can point the direct HTTP
+// helpers at a local fake.
+var notionAPIBaseURL = "https://api.notion.com/v1"
+
 const (
-	notionAPIBaseURL      = "https://api.notion.com/v1"
 	notionTrashAPIVersion = "2026-03-11"
 	// Mirrors the SDK's default (notionapi.Client.maxRetries = 3) so the
 	// shim's rate-limit behavior matches the rest of the provider.
