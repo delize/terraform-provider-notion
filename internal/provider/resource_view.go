@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"reflect"
 
 	"github.com/hashicorp/terraform-plugin-framework/path"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
@@ -229,12 +230,24 @@ func (r *ViewResource) Update(ctx context.Context, req resource.UpdateRequest, r
 		return
 	}
 
+	var prior ViewResourceModel
+	resp.Diagnostics.Append(req.State.Get(ctx, &prior)...)
+	if resp.Diagnostics.HasError() {
+		return
+	}
+
 	name := plan.Name.ValueString()
 	payload := viewUpdate{Name: &name}
 	if err := unpackViewJSONUpdate(&payload, &plan); err != nil {
 		resp.Diagnostics.AddError("Invalid view JSON attribute", err.Error())
 		return
 	}
+	qf, err := clearRemovedQuickFilters(payload.QuickFilters, prior.QuickFilters)
+	if err != nil {
+		resp.Diagnostics.AddError("Invalid view JSON attribute", err.Error())
+		return
+	}
+	payload.QuickFilters = qf
 
 	token, err := tokenForClient(r.client)
 	if err != nil {
@@ -248,6 +261,7 @@ func (r *ViewResource) Update(ctx context.Context, req resource.UpdateRequest, r
 		return
 	}
 
+	keepPriorWhereUnknown(&plan, prior)
 	r.viewToState(v, &plan)
 	resp.Diagnostics.Append(resp.State.Set(ctx, &plan)...)
 }
@@ -290,17 +304,65 @@ func (r *ViewResource) viewToState(v *viewObject, state *ViewResourceModel) {
 	if v.DataSourceID != "" && normalizeID(v.DataSourceID) != normalizeID(state.DataSourceID.ValueString()) {
 		state.DataSourceID = types.StringValue(normalizeID(v.DataSourceID))
 	}
-	state.Filter = jsonRawToTFString(v.Filter)
-	state.Sorts = jsonRawToTFString(v.Sorts)
-	state.QuickFilters = jsonRawToTFString(v.QuickFilters)
-	state.Configuration = jsonRawToTFString(v.Configuration)
+	// Keep the configured JSON when Notion's copy means the same thing, so
+	// key order, whitespace, and merged configuration fields don't fail the
+	// apply or plan a diff. See viewJSONReadback.
+	state.Filter = viewJSONReadback(state.Filter, v.Filter, false)
+	state.Sorts = viewJSONReadback(state.Sorts, v.Sorts, false)
+	state.QuickFilters = viewJSONReadback(state.QuickFilters, v.QuickFilters, false)
+	state.Configuration = viewJSONReadback(state.Configuration, v.Configuration, true)
 }
 
-func jsonRawToTFString(raw json.RawMessage) types.String {
-	if len(raw) == 0 || string(raw) == "null" {
-		return types.StringValue("")
+// keepPriorWhereUnknown fills JSON attributes the plan left unknown (not in
+// the config, and the resource has other changes) with the prior state, so
+// the readback compares against what's stored and keeps that string when
+// Notion's value is unchanged.
+func keepPriorWhereUnknown(plan *ViewResourceModel, prior ViewResourceModel) {
+	for _, p := range []struct{ plan, prior *types.String }{
+		{&plan.Filter, &prior.Filter},
+		{&plan.Sorts, &prior.Sorts},
+		{&plan.QuickFilters, &prior.QuickFilters},
+		{&plan.Configuration, &prior.Configuration},
+	} {
+		if p.plan.IsUnknown() {
+			*p.plan = *p.prior
+		}
 	}
-	return types.StringValue(string(raw))
+}
+
+// clearRemovedQuickFilters adds a null for every quick filter the prior
+// state has and the plan dropped. The views guide says an update keeps
+// quick filters it doesn't name and removes one set to null, so without
+// this a removed quick filter would stay in Notion.
+//
+// Keys can be property names or IDs, and Notion returns IDs. A state that
+// holds Notion's copy can name a property by ID while the config names it,
+// so nulling the ID could remove the filter the config sets. To stay safe,
+// nothing is nulled when the plan adds a key the prior state doesn't have.
+func clearRemovedQuickFilters(planned json.RawMessage, prior types.String) (json.RawMessage, error) {
+	if len(planned) == 0 || prior.IsNull() || prior.IsUnknown() || prior.ValueString() == "" {
+		return planned, nil
+	}
+	var plan, old map[string]interface{}
+	if json.Unmarshal(planned, &plan) != nil || json.Unmarshal([]byte(prior.ValueString()), &old) != nil {
+		return planned, nil
+	}
+	for k := range plan {
+		if _, ok := old[k]; !ok {
+			return planned, nil
+		}
+	}
+	changed := false
+	for k := range old {
+		if _, ok := plan[k]; !ok {
+			plan[k] = nil
+			changed = true
+		}
+	}
+	if !changed {
+		return planned, nil
+	}
+	return json.Marshal(plan)
 }
 
 func unpackViewJSON(payload *viewCreate, plan *ViewResourceModel) error {
@@ -347,4 +409,78 @@ func readPlanJSON(v types.String, field string) (json.RawMessage, error) {
 		return nil, fmt.Errorf("%s is not valid JSON: %w", field, err)
 	}
 	return raw, nil
+}
+
+// viewJSONReadback returns the string to store for one of notion_view's
+// JSON attributes once Notion has returned raw for it. Notion returns null
+// for a filter, sorts, quick filters, or configuration that isn't set, which
+// is stored as "" as before.
+//
+// Two values match when they decode to the same JSON, so key order and
+// whitespace don't matter. With mergedKeys set (configuration), keys that
+// only Notion's value has are ignored at the top level. The views guide says
+// configuration updates are a shallow merge that preserves omitted fields,
+// so Notion's configuration can carry top-level fields the config never
+// set. Nested values, and every other attribute, must match exactly. Notion
+// documents no other defaults it adds.
+func viewJSONReadback(prior types.String, raw json.RawMessage, mergedKeys bool) types.String {
+	if len(raw) == 0 || string(raw) == "null" {
+		if !prior.IsNull() && !prior.IsUnknown() && isEmptyJSONCollection(prior.ValueString()) {
+			return prior
+		}
+		return types.StringValue("")
+	}
+	var got interface{}
+	if err := json.Unmarshal(raw, &got); err != nil {
+		return types.StringValue(string(raw))
+	}
+	if !prior.IsNull() && !prior.IsUnknown() && prior.ValueString() != "" {
+		var want interface{}
+		if err := json.Unmarshal([]byte(prior.ValueString()), &want); err == nil && viewJSONEqual(want, got, mergedKeys) {
+			return prior
+		}
+	}
+	b, err := json.Marshal(got)
+	if err != nil {
+		return types.StringValue(string(raw))
+	}
+	return types.StringValue(string(b))
+}
+
+// isEmptyJSONCollection reports whether s is [] or {}. Sending an empty
+// sorts array or quick_filters object leaves nothing set, and Notion then
+// returns null.
+func isEmptyJSONCollection(s string) bool {
+	var v interface{}
+	if err := json.Unmarshal([]byte(s), &v); err != nil {
+		return false
+	}
+	switch c := v.(type) {
+	case []interface{}:
+		return len(c) == 0
+	case map[string]interface{}:
+		return len(c) == 0
+	}
+	return false
+}
+
+func viewJSONEqual(want, got interface{}, mergedKeys bool) bool {
+	w, wok := want.(map[string]interface{})
+	g, gok := got.(map[string]interface{})
+	if !mergedKeys || !wok || !gok {
+		return reflect.DeepEqual(want, got)
+	}
+	for k, wv := range w {
+		gv, present := g[k]
+		if wv == nil {
+			if present && gv != nil {
+				return false
+			}
+			continue
+		}
+		if !present || !reflect.DeepEqual(wv, gv) {
+			return false
+		}
+	}
+	return true
 }
