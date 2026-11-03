@@ -55,10 +55,11 @@ One of `parent_page_id` or `discussion_id` must be set; the other must be omitte
 
 - `id` (String) The comment ID.
 - `plain_text` (String) Server-rendered plain-text representation of the body.
-- `anchor_block_id` (String) Block (page) the discussion is anchored to. Used internally for refresh.
+- `anchor_block_id` (String) ID of the page or block the discussion is anchored to.
 - `created_time` (String) RFC3339 timestamp of when the comment was created.
 - `last_edited_time` (String) RFC3339 timestamp of the most recent edit.
 - `created_by` (String) ID of the user/bot that created the comment.
+- `property_id` (String) ID of the database page property the comment is on, or empty for a comment on a page or block. Notion reports it on comments made in the app, but the API can't create property comments.
 
 ## Import
 
@@ -66,4 +67,4 @@ One of `parent_page_id` or `discussion_id` must be set; the other must be omitte
 terraform import notion_comment.example <comment-id>
 ```
 
-Note: imported comments without a known anchor (page or block) won't refresh on subsequent `terraform plan` runs until `anchor_block_id` is populated. Importing comments created on pages: also set `parent_page_id` in your config.
+Refresh reads each comment by ID with `GET /v1/comments/{id}`, so replies and imported comments stay in sync. After an import, set `rich_text` or `markdown` and `parent_page_id` or `discussion_id` in your config to match the comment, or the next plan replaces it.

@@ -47,8 +47,8 @@ type notionRichText struct {
 }
 
 type notionRichTextText struct {
-	Content string                 `json:"content"`
-	Link    *notionRichTextLink    `json:"link,omitempty"`
+	Content string              `json:"content"`
+	Link    *notionRichTextLink `json:"link,omitempty"`
 }
 
 type notionRichTextLink struct {
@@ -58,14 +58,30 @@ type notionRichTextLink struct {
 // commentResponse is the relevant subset of /v1/comments responses we surface
 // to Terraform.
 type commentResponse struct {
-	ID             string           `json:"id"`
-	DiscussionID   string           `json:"discussion_id"`
-	CreatedTime    string           `json:"created_time"`
-	LastEditedTime string           `json:"last_edited_time"`
+	ID             string `json:"id"`
+	DiscussionID   string `json:"discussion_id"`
+	CreatedTime    string `json:"created_time"`
+	LastEditedTime string `json:"last_edited_time"`
 	CreatedBy      struct {
 		ID string `json:"id"`
 	} `json:"created_by"`
 	RichText []notionRichText `json:"rich_text"`
+	// Parent is the page or block the comment's discussion sits on.
+	Parent struct {
+		Type    string `json:"type"`
+		PageID  string `json:"page_id"`
+		BlockID string `json:"block_id"`
+	} `json:"parent"`
+	// PropertyID is set only for comments on a database page property.
+	PropertyID string `json:"property_id"`
+}
+
+// anchorID returns the ID of the page or block the comment is on.
+func (c *commentResponse) anchorID() string {
+	if c.Parent.BlockID != "" {
+		return normalizeID(c.Parent.BlockID)
+	}
+	return normalizeID(c.Parent.PageID)
 }
 
 // createComment POSTs /v1/comments. parentPageID and discussionID are
@@ -108,6 +124,29 @@ func updateComment(ctx context.Context, token, commentID, richTextContent, markd
 	}
 
 	return commentRequest(ctx, http.MethodPatch, fmt.Sprintf("%s/comments/%s", notionAPIBaseURL, commentID), token, &body)
+}
+
+// getComment GETs /v1/comments/{id}. found is false when Notion answers 404,
+// which means the comment was deleted or the integration lost access.
+func getComment(ctx context.Context, token, commentID string) (c *commentResponse, found bool, err error) {
+	url := fmt.Sprintf("%s/comments/%s", notionAPIBaseURL, commentID)
+	resp, err := doNotionRequest(ctx, http.MethodGet, url, token, nil)
+	if err != nil {
+		return nil, false, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode == http.StatusNotFound {
+		return nil, false, nil
+	}
+	if resp.StatusCode >= 400 {
+		respBody, _ := io.ReadAll(resp.Body)
+		return nil, false, fmt.Errorf("notion API %d reading comment %s: %s", resp.StatusCode, commentID, string(respBody))
+	}
+	var out commentResponse
+	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+		return nil, false, err
+	}
+	return &out, true, nil
 }
 
 // deleteComment DELETEs /v1/comments/{id}. Returns the deleted comment per

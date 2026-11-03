@@ -33,6 +33,7 @@ type CommentResourceModel struct {
 	CreatedTime    types.String `tfsdk:"created_time"`
 	LastEditedTime types.String `tfsdk:"last_edited_time"`
 	CreatedBy      types.String `tfsdk:"created_by"`
+	PropertyID     types.String `tfsdk:"property_id"`
 }
 
 func NewCommentResource() resource.Resource {
@@ -93,9 +94,8 @@ func (r *CommentResource) Schema(_ context.Context, _ resource.SchemaRequest, re
 				Computed: true,
 			},
 			"anchor_block_id": schema.StringAttribute{
-				Description: "The block ID (page or block) that this comment's discussion is anchored to. " +
-					"Used internally to look the comment back up during refresh.",
-				Computed: true,
+				Description: "ID of the page or block that this comment's discussion is anchored to.",
+				Computed:    true,
 				PlanModifiers: []planmodifier.String{
 					stringplanmodifier.UseStateForUnknown(),
 				},
@@ -115,6 +115,14 @@ func (r *CommentResource) Schema(_ context.Context, _ resource.SchemaRequest, re
 			"created_by": schema.StringAttribute{
 				Description: "ID of the user/bot that created the comment.",
 				Computed:    true,
+				PlanModifiers: []planmodifier.String{
+					stringplanmodifier.UseStateForUnknown(),
+				},
+			},
+			"property_id": schema.StringAttribute{
+				Description: "ID of the database page property the comment is on, or empty for a comment on a page or block. " +
+					"Read-only, because the API can't create property comments.",
+				Computed: true,
 				PlanModifiers: []planmodifier.String{
 					stringplanmodifier.UseStateForUnknown(),
 				},
@@ -200,50 +208,24 @@ func (r *CommentResource) Read(ctx context.Context, req resource.ReadRequest, re
 		return
 	}
 
-	anchor := state.AnchorBlockID.ValueString()
-	if anchor == "" {
-		anchor = state.ParentPageID.ValueString()
-	}
-	if anchor == "" {
-		// Nothing to query against — can't refresh.
+	token, err := tokenForClient(r.client)
+	if err != nil {
+		resp.Diagnostics.AddError("Error refreshing comment", err.Error())
 		return
 	}
-
-	wantID := state.ID.ValueString()
-	var cursor notionapi.Cursor
-	for {
-		page, err := r.client.Comment.Get(ctx, notionapi.BlockID(anchor), &notionapi.Pagination{
-			StartCursor: cursor,
-			PageSize:    100,
-		})
-		if err != nil {
-			resp.Diagnostics.AddError("Error refreshing comment", err.Error())
-			return
-		}
-		for _, c := range page.Results {
-			if string(c.ID) == wantID {
-				state.LastEditedTime = types.StringValue(c.LastEditedTime.Format("2006-01-02T15:04:05.000Z"))
-				state.CreatedTime = types.StringValue(c.CreatedTime.Format("2006-01-02T15:04:05.000Z"))
-				state.CreatedBy = types.StringValue(string(c.CreatedBy.ID))
-				state.DiscussionID = types.StringValue(string(c.DiscussionID))
-				// Refresh plain_text from server's rich_text array.
-				plain := ""
-				for _, rt := range c.RichText {
-					plain += rt.PlainText
-				}
-				state.PlainText = types.StringValue(plain)
-				resp.Diagnostics.Append(resp.State.Set(ctx, &state)...)
-				return
-			}
-		}
-		if !page.HasMore {
-			break
-		}
-		cursor = notionapi.Cursor(page.NextCursor)
+	// Read the comment by ID. Listing the anchor's comments couldn't
+	// refresh a reply, which has no parent_page_id to list under.
+	c, found, err := getComment(ctx, token, state.ID.ValueString())
+	if err != nil {
+		resp.Diagnostics.AddError("Error refreshing comment", err.Error())
+		return
 	}
-
-	// Comment not found under its anchor — assume it was deleted externally.
-	resp.State.RemoveResource(ctx)
+	if !found {
+		resp.State.RemoveResource(ctx)
+		return
+	}
+	r.applyResponseToState(&state, c)
+	resp.Diagnostics.Append(resp.State.Set(ctx, &state)...)
 }
 
 func (r *CommentResource) Update(ctx context.Context, req resource.UpdateRequest, resp *resource.UpdateResponse) {
@@ -312,15 +294,17 @@ func (r *CommentResource) applyResponseToState(state *CommentResourceModel, resp
 	state.LastEditedTime = types.StringValue(resp.LastEditedTime)
 	state.CreatedBy = types.StringValue(resp.CreatedBy.ID)
 	state.PlainText = types.StringValue(richTextPlainFromShim(resp.RichText))
+	state.PropertyID = types.StringValue(resp.PropertyID)
 
-	// Anchor is the block the comment's discussion lives on. For a fresh
-	// comment created with parent_page_id, that's the page itself. For a
-	// reply to an existing discussion, we don't get the anchor directly in
-	// the response — fall back to parent_page_id if set (will be empty for
-	// the reply case, which is fine; Read just won't refresh those).
-	if state.ParentPageID.ValueString() != "" {
+	// Anchor is the page or block the comment's discussion lives on. Keep
+	// the configured parent_page_id form when set, otherwise take it from
+	// the response's parent, which also covers replies.
+	switch {
+	case state.ParentPageID.ValueString() != "":
 		state.AnchorBlockID = state.ParentPageID
-	} else if state.AnchorBlockID.IsUnknown() || state.AnchorBlockID.IsNull() {
+	case resp.anchorID() != "":
+		state.AnchorBlockID = types.StringValue(resp.anchorID())
+	case state.AnchorBlockID.IsUnknown() || state.AnchorBlockID.IsNull():
 		state.AnchorBlockID = types.StringValue("")
 	}
 }
