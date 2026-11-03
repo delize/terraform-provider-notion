@@ -2,9 +2,11 @@ package provider
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
 	"regexp"
+	"strings"
 	"testing"
 
 	"github.com/hashicorp/terraform-plugin-testing/helper/resource"
@@ -413,4 +415,146 @@ resource "notion_database_entry" "owned" {
   depends_on = [notion_database_property_people.owner]
 }
 `, parentPageID, owners)
+}
+
+// TestAccDatabaseEntryResource_ClearScalarValues sets a number, select,
+// status, URL, email, and phone number, then removes every key from the
+// config. The update sends null for each, and the check reads the page back
+// from Notion to confirm the values are gone. Notion resets a status to the
+// property's default option rather than leaving it empty.
+func TestAccDatabaseEntryResource_ClearScalarValues(t *testing.T) {
+	parentPageID := os.Getenv("NOTION_TEST_PARENT_PAGE_ID")
+	if parentPageID == "" {
+		t.Skip("NOTION_TEST_PARENT_PAGE_ID not set")
+	}
+	parentPageID = makeIsolatedParentPage(t, notionTestClient(t), "entryclearscalars")
+
+	const addr = "notion_database_entry.row"
+	set := `
+  number_properties       = { "Points" = 5 }
+  select_properties       = { "Priority" = "High" }
+  status_properties       = { "Stage" = "Done" }
+  url_properties          = { "Link" = "https://example.com" }
+  email_properties        = { "Contact" = "someone@example.com" }
+  phone_number_properties = { "Phone" = "+1 415 555 0100" }`
+	resource.Test(t, resource.TestCase{
+		ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
+		Steps: []resource.TestStep{
+			{
+				Config: testAccDatabaseEntryScalarsConfig(parentPageID, set),
+				Check: resource.ComposeAggregateTestCheckFunc(
+					resource.TestCheckResourceAttr(addr, "number_properties.Points", "5"),
+					resource.TestCheckResourceAttr(addr, "status_properties.Stage", "Done"),
+					resource.TestCheckResourceAttr(addr, "phone_number_properties.Phone", "+1 415 555 0100"),
+				),
+			},
+			{
+				Config: testAccDatabaseEntryScalarsConfig(parentPageID, ""),
+				Check: resource.ComposeAggregateTestCheckFunc(
+					resource.TestCheckNoResourceAttr(addr, "number_properties.%"),
+					resource.TestCheckNoResourceAttr(addr, "status_properties.%"),
+					testAccCheckEntryScalarsCleared(t, addr),
+				),
+			},
+		},
+	})
+}
+
+// testAccCheckEntryScalarsCleared reads the page over direct HTTP, since the
+// SDK decodes a null number as 0 and can't tell the two apart.
+func testAccCheckEntryScalarsCleared(t *testing.T, addr string) resource.TestCheckFunc {
+	return func(s *terraform.State) error {
+		rs, ok := s.RootModule().Resources[addr]
+		if !ok {
+			return fmt.Errorf("%s not in state", addr)
+		}
+		body, err := doNotionGet(context.Background(), notionAPIBaseURL+"/pages/"+rs.Primary.ID, os.Getenv("NOTION_TOKEN"), notionTrashAPIVersion)
+		if err != nil {
+			return err
+		}
+		var page struct {
+			Properties map[string]map[string]json.RawMessage `json:"properties"`
+		}
+		if err := json.Unmarshal(body, &page); err != nil {
+			return err
+		}
+		for name, field := range map[string]string{"Points": "number", "Priority": "select", "Link": "url", "Contact": "email", "Phone": "phone_number"} {
+			if v := string(page.Properties[name][field]); v != "null" {
+				return fmt.Errorf("%s.%s is %s in Notion, want null", name, field, v)
+			}
+		}
+		stage := string(page.Properties["Stage"]["status"])
+		if strings.Contains(stage, `"Done"`) {
+			return fmt.Errorf("Stage is still Done in Notion: %s", stage)
+		}
+		t.Logf("number, select, URL, email, and phone are null in Notion, and Stage is now %s", stage)
+		return nil
+	}
+}
+
+func testAccDatabaseEntryScalarsConfig(parentPageID, values string) string {
+	return fmt.Sprintf(`
+resource "notion_database" "db" {
+  parent             = %q
+  title              = "Clear Scalar Values"
+  title_column_title = "Name"
+}
+
+resource "notion_database_property_number" "points" {
+  database = notion_database.db.id
+  name     = "Points"
+  format   = "number"
+}
+
+resource "notion_database_property_select" "priority" {
+  database = notion_database.db.id
+  name     = "Priority"
+  options  = { "High" = "red", "Low" = "gray" }
+
+  depends_on = [notion_database_property_number.points]
+}
+
+resource "notion_database_property_status" "stage" {
+  database = notion_database.db.id
+  name     = "Stage"
+  options = {
+    "Not started" = "default"
+    "Done"        = "green"
+  }
+  option_groups = {
+    "Done" = "Complete"
+  }
+
+  depends_on = [notion_database_property_select.priority]
+}
+
+resource "notion_database_property_url" "link" {
+  database = notion_database.db.id
+  name     = "Link"
+
+  depends_on = [notion_database_property_status.stage]
+}
+
+resource "notion_database_property_email" "contact" {
+  database = notion_database.db.id
+  name     = "Contact"
+
+  depends_on = [notion_database_property_url.link]
+}
+
+resource "notion_database_property_phone_number" "phone" {
+  database = notion_database.db.id
+  name     = "Phone"
+
+  depends_on = [notion_database_property_email.contact]
+}
+
+resource "notion_database_entry" "row" {
+  database = notion_database.db.id
+  title    = "Row"
+%s
+
+  depends_on = [notion_database_property_phone_number.phone]
+}
+`, parentPageID, values)
 }

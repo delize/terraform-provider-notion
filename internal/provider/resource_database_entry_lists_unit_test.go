@@ -117,8 +117,9 @@ func TestClearRemovedListProperties(t *testing.T) {
 	}
 }
 
-// A removed number, select, URL, email, or phone number is sent as null.
-// Notion rejects "" for the last three and would store 0 for a number.
+// A removed number, select, status, URL, email, or phone number is sent as
+// null. Notion rejects "" for the last three and would store 0 for a number.
+// A null status resets it to the property's default option.
 func TestClearRemovedProperties_SendsNull(t *testing.T) {
 	str := func(m map[string]string) types.Map {
 		v, d := types.MapValueFrom(context.Background(), types.StringType, m)
@@ -134,6 +135,7 @@ func TestClearRemovedProperties_SendsNull(t *testing.T) {
 	}
 	state.NumberProperties = num
 	state.SelectProperties = str(map[string]string{"Priority": "High"})
+	state.StatusProperties = str(map[string]string{"Stage": "Done"})
 	state.URLProperties = str(map[string]string{"Link": "https://example.com"})
 	state.EmailProperties = str(map[string]string{"Contact": "a@example.com"})
 	state.PhoneNumberProperties = str(map[string]string{"Phone": "+1 415 555 0100", "Kept": "+1"})
@@ -150,7 +152,7 @@ func TestClearRemovedProperties_SendsNull(t *testing.T) {
 	if err := json.Unmarshal(raw, &got); err != nil {
 		t.Fatal(err)
 	}
-	for name, field := range map[string]string{"Points": "number", "Priority": "select", "Link": "url", "Contact": "email", "Phone": "phone_number"} {
+	for name, field := range map[string]string{"Points": "number", "Priority": "select", "Stage": "status", "Link": "url", "Contact": "email", "Phone": "phone_number"} {
 		v, ok := got[name][field]
 		if !ok || string(v) != "null" {
 			t.Errorf("%s.%s = %s, want null (body %s)", name, field, v, raw)

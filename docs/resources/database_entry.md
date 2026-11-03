@@ -160,10 +160,10 @@ A replace overwrites everything on the entry's page with the configured markdown
 - `markdown` (String) Body content of the entry's page as markdown in the syntax set by `markdown_version`. Full-rewrite semantics (`replace_content`), sent only when the markdown or its version changes. Not read back from Notion, since Notion normalizes markdown. The typed property maps are sent in the same create request as the markdown. Earlier provider versions sent only the title there, so properties stayed unset until the next update.
 - `markdown_version` (String) Markdown syntax for `markdown`: `v2` (Notion-flavored Markdown) or `v1` (enhanced markdown, deprecated). Overrides the provider's `markdown_version`. When neither is set, the field is left out and Notion uses `v1`. Records the provider default when only that is set. Changing the effective version replaces the body once. See [Markdown versions](#markdown-versions).
 - `rich_text_properties` (Map of String) Map of rich text property name to string value. Values support markdown links: `[text](url)`.
-- `number_properties` (Map of Number) Map of number property name to numeric value.
+- `number_properties` (Map of Number) Map of number property name to numeric value. Removing a key from this or any other property map clears that value in Notion.
 - `checkbox_properties` (Map of Boolean) Map of checkbox property name to boolean value.
 - `select_properties` (Map of String) Map of select property name to option name.
-- `status_properties` (Map of String) Map of status property name to status name.
+- `status_properties` (Map of String) Map of status property name to status name. Removing a key resets the status to the property's default option, which is how Notion clears a status.
 - `url_properties` (Map of String) Map of URL property name to URL value.
 - `email_properties` (Map of String) Map of email property name to email value.
 - `phone_number_properties` (Map of String) Map of phone number property name to phone number value.
