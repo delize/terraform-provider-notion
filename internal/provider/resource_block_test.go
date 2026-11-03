@@ -197,3 +197,68 @@ resource "notion_block" "explicit" {
 }
 `, parentPageID, colorLine)
 }
+
+// TestAccBlockCalloutIcons walks a callout through a native icon
+// (2026-03-25), then an emoji with a color, then no icon or color at all
+// (which must clear both), and imports it. The callout sits in an isolated
+// page that cleanup trashes.
+func TestAccBlockCalloutIcons(t *testing.T) {
+	if os.Getenv("NOTION_TOKEN") == "" {
+		t.Skip("NOTION_TOKEN not set")
+	}
+	parentID := makeIsolatedParentPage(t, notionTestClient(t), "callout-icons")
+
+	const addr = "notion_block.callout"
+	resource.Test(t, resource.TestCase{
+		ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
+		Steps: []resource.TestStep{
+			{
+				Config: testAccBlockCalloutConfig(parentID, `
+  icon_name  = "pizza"
+  icon_color = "blue"`),
+				Check: resource.ComposeAggregateTestCheckFunc(
+					resource.TestCheckResourceAttr(addr, "type", "callout"),
+					resource.TestCheckResourceAttr(addr, "rich_text", "Callout with an icon"),
+					resource.TestCheckResourceAttr(addr, "icon_name", "pizza"),
+					resource.TestCheckResourceAttr(addr, "icon_color", "blue"),
+					resource.TestCheckResourceAttr(addr, "icon", ""),
+					resource.TestCheckResourceAttr(addr, "color", ""),
+				),
+			},
+			{
+				Config: testAccBlockCalloutConfig(parentID, `
+  icon  = "💡"
+  color = "yellow_background"`),
+				Check: resource.ComposeAggregateTestCheckFunc(
+					resource.TestCheckNoResourceAttr(addr, "icon_name"),
+					resource.TestCheckNoResourceAttr(addr, "icon_color"),
+					resource.TestCheckResourceAttr(addr, "icon", "💡"),
+					resource.TestCheckResourceAttr(addr, "color", "yellow_background"),
+				),
+			},
+			{
+				Config: testAccBlockCalloutConfig(parentID, ""),
+				Check: resource.ComposeAggregateTestCheckFunc(
+					resource.TestCheckResourceAttr(addr, "icon", ""),
+					resource.TestCheckResourceAttr(addr, "color", ""),
+				),
+			},
+			{
+				ResourceName:      addr,
+				ImportState:       true,
+				ImportStateVerify: true,
+			},
+		},
+	})
+}
+
+func testAccBlockCalloutConfig(parentID, extra string) string {
+	return fmt.Sprintf(`
+resource "notion_block" "callout" {
+  parent_id = %q
+  type      = "callout"
+  rich_text = "Callout with an icon"
+%s
+}
+`, parentID, extra)
+}
