@@ -93,7 +93,16 @@ func waitForSearchIndex(t *testing.T, client *notionapi.Client, query, expectedI
 			PageSize: 100,
 		})
 		if err != nil {
-			t.Fatalf("waitForSearchIndex: search failed: %v", err)
+			// Notion's search sometimes answers with an HTML error page that
+			// isn't a 5xx, so the retry layer passes it through. Keep polling
+			// until the deadline instead of failing on one bad response.
+			if time.Now().After(deadline) {
+				t.Fatalf("waitForSearchIndex: search still failing at the deadline: %v", err)
+			}
+			t.Logf("waitForSearchIndex: search failed, polling again: %v", err)
+			consecutiveHits = 0
+			time.Sleep(3 * time.Second)
+			continue
 		}
 		found := false
 		for _, obj := range resp.Results {

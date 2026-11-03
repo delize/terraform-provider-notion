@@ -20,7 +20,9 @@ func notionTestClient(t *testing.T) *notionapi.Client {
 	if token == "" {
 		t.Fatal("NOTION_TOKEN must be set for acceptance tests")
 	}
-	return notionapi.NewClient(notionapi.Token(token))
+	// Same retry layer as the provider, so a transient edge error page in a
+	// setup or polling call doesn't fail the test.
+	return notionapi.NewClient(notionapi.Token(token), notionapi.WithHTTPClient(newRetryHTTPClient()))
 }
 
 // findRootPageID returns the ID of any page the integration token has access
