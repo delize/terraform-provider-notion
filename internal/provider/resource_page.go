@@ -21,6 +21,7 @@ var (
 	_ resource.Resource                   = &PageResource{}
 	_ resource.ResourceWithImportState    = &PageResource{}
 	_ resource.ResourceWithValidateConfig = &PageResource{}
+	_ resource.ResourceWithModifyPlan     = &PageResource{}
 )
 
 type PageResource struct {
@@ -42,6 +43,7 @@ type PageResourceModel struct {
 	Position          types.String         `tfsdk:"position"`
 	AfterBlockID      types.String         `tfsdk:"after_block_id"`
 	Markdown          types.String         `tfsdk:"markdown"`
+	MarkdownVersion   types.String         `tfsdk:"markdown_version"`
 	MarkdownInsert    *MarkdownInsertModel `tfsdk:"markdown_insert"`
 	TemplateID        types.String         `tfsdk:"template_id"`
 	TemplateTimezone  types.String         `tfsdk:"template_timezone"`
@@ -147,6 +149,7 @@ func (r *PageResource) Schema(_ context.Context, _ resource.SchemaRequest, resp 
 					"Note: Notion may normalize the markdown content, so the stored value may differ slightly from what was submitted.",
 				Optional: true,
 			},
+			"markdown_version": markdownVersionResourceAttribute(),
 			"template_id": schema.StringAttribute{
 				Description: "Optional Notion template page ID to apply at creation (2026-01-15 API addition). " +
 					"Once set, the template is applied asynchronously by Notion; the page is initially returned blank. " +
@@ -335,17 +338,19 @@ func (r *PageResource) createWithTemplate(ctx context.Context, plan *PageResourc
 }
 
 func (r *PageResource) createWithMarkdown(ctx context.Context, plan *PageResourceModel, resp *resource.CreateResponse) {
-	pageID, pageURL, err := r.mdClient.CreatePageWithMarkdownAndTitle(
+	created, err := r.mdClient.CreatePageWithMarkdownAndTitle(
 		ctx,
 		plan.ParentPageID.ValueString(),
 		plan.Title.ValueString(),
 		plan.Markdown.ValueString(),
+		r.mdClient.resolveMarkdownVersion(plan.MarkdownVersion),
 		r.position(plan),
 	)
 	if err != nil {
 		resp.Diagnostics.AddError("Error creating page with markdown", err.Error())
 		return
 	}
+	pageID, pageURL := created.ID, created.URL
 
 	plan.ID = types.StringValue(normalizeID(pageID))
 	plan.URL = types.StringValue(pageURL)
@@ -568,7 +573,8 @@ func (r *PageResource) Update(ctx context.Context, req resource.UpdateRequest, r
 
 	// Update markdown content if set
 	if !plan.Markdown.IsNull() && !plan.Markdown.IsUnknown() {
-		_, err = r.mdClient.ReplacePageMarkdown(ctx, plan.ID.ValueString(), plan.Markdown.ValueString())
+		_, err = r.mdClient.ReplacePageMarkdown(ctx, plan.ID.ValueString(), plan.Markdown.ValueString(),
+			r.mdClient.resolveMarkdownVersion(plan.MarkdownVersion))
 		if err != nil {
 			resp.Diagnostics.AddError("Error updating page markdown", err.Error())
 			return
@@ -602,6 +608,7 @@ func (r *PageResource) applyMarkdownInsert(ctx context.Context, plan *PageResour
 		plan.ID.ValueString(),
 		plan.MarkdownInsert.Content.ValueString(),
 		plan.MarkdownInsert.Position.ValueString(),
+		r.mdClient.resolveMarkdownVersion(plan.MarkdownVersion),
 	)
 	if err != nil {
 		var diags diag.Diagnostics
@@ -627,6 +634,13 @@ func (r *PageResource) Delete(ctx context.Context, req resource.DeleteRequest, r
 		resp.Diagnostics.AddError("Error trashing page", err.Error())
 		return
 	}
+}
+
+// ModifyPlan records the markdown_version the next write will use, so a
+// change to the provider default shows up as a diff on pages that manage
+// markdown. See plannedMarkdownVersion.
+func (r *PageResource) ModifyPlan(ctx context.Context, req resource.ModifyPlanRequest, resp *resource.ModifyPlanResponse) {
+	modifyMarkdownVersionPlan(ctx, r.mdClient, req, resp)
 }
 
 func (r *PageResource) ImportState(ctx context.Context, req resource.ImportStateRequest, resp *resource.ImportStateResponse) {
