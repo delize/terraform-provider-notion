@@ -1,10 +1,15 @@
 package provider
 
 import (
+	"bytes"
+	"context"
 	"crypto/rand"
+	"encoding/json"
 	"encoding/binary"
+	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"strconv"
 	"strings"
@@ -45,6 +50,18 @@ import (
 //     latency profile.
 //   - 429. The jomei SDK already handles these with Retry-After semantics;
 //     adding a second retry loop here would interact badly with the SDK's.
+//   - A JSON 504 with code "gateway_timeout" on POST or PATCH. Since
+//     2026-09-24 Notion returns this (instead of a 500) when a markdown
+//     write timed out, and says to check whether the write saved before
+//     retrying. Replaying a non-idempotent write such as insert_content
+//     could duplicate content, so the response goes back to the caller.
+//     Edge HTML 504s are still retried, since those never reached the API.
+//   - A request marked with withNoReplay once it reached the API. That
+//     covers any JSON response and any transport error other than a failed
+//     dial. Creates such as a legal hold or an export have no idempotency
+//     key, so a resend after a server error could make a second one. Edge
+//     HTML errors and dial failures are still retried, since the request
+//     never got to Notion.
 //   - Requests whose body cannot be replayed (no GetBody set). For
 //     idempotent GET/HEAD/DELETE there's no body to replay; for
 //     POST/PATCH the SDK constructs requests with bytes.Buffer which
@@ -54,7 +71,10 @@ import (
 // Backoff
 //
 // Exponential with jitter, capped at maxDelay. If the response carries a
-// Retry-After header, we honour it (capped to maxDelay).
+// Retry-After header, we honour it (capped to maxDelay). 429s, where Notion
+// sends Retry-After values up to 60s, are handled by the SDK and by
+// doNotionRequestWithVersion rather than here, so this cap only applies to
+// 5xx retries.
 type retryTransport struct {
 	next       http.RoundTripper // underlying transport; defaults to http.DefaultTransport
 	maxRetries int               // total attempts = maxRetries + 1
@@ -75,9 +95,9 @@ func newRetryHTTPClient() *http.Client {
 			baseDelay:  500 * time.Millisecond,
 			maxDelay:   30 * time.Second,
 		},
-		// Generous per-attempt timeout. The retry loop is bounded by
-		// maxRetries × maxDelay anyway, so this just keeps a single
-		// hung connection from holding things up forever.
+		// http.Client.Timeout covers the whole call, so every attempt and
+		// every backoff sleep share these 90 seconds. Retries stop when it
+		// runs out, even if maxRetries hasn't been reached.
 		Timeout: 90 * time.Second,
 	}
 }
@@ -127,12 +147,15 @@ func (rt *retryTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 
 		resp, err := rt.next.RoundTrip(req)
 		if err != nil {
+			if noReplay(req) && !isDialError(err) {
+				return nil, err
+			}
 			// Network/transport error — retry.
 			lastErr, lastResp = err, nil
 			continue
 		}
 
-		if !shouldRetryResponse(resp) {
+		if isWriteGatewayTimeout(req, resp) || (noReplay(req) && isJSONResponse(resp)) || !shouldRetryResponse(resp) {
 			return edgeErrorAsJSON(resp), nil
 		}
 
@@ -146,6 +169,33 @@ func (rt *retryTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 		return edgeErrorAsJSON(lastResp), nil
 	}
 	return nil, lastErr
+}
+
+type noReplayKey struct{}
+
+// withNoReplay marks requests made with ctx as unsafe to resend once they
+// reached Notion. Use it for POSTs that create something and have no
+// idempotency key.
+func withNoReplay(ctx context.Context) context.Context {
+	return context.WithValue(ctx, noReplayKey{}, true)
+}
+
+func noReplay(req *http.Request) bool {
+	v, _ := req.Context().Value(noReplayKey{}).(bool)
+	return v
+}
+
+// isDialError reports whether err happened while connecting, before any of
+// the request was sent.
+func isDialError(err error) bool {
+	var opErr *net.OpError
+	return errors.As(err, &opErr) && opErr.Op == "dial"
+}
+
+// isJSONResponse reports whether resp came from the Notion API itself
+// rather than an edge error page.
+func isJSONResponse(resp *http.Response) bool {
+	return strings.HasPrefix(strings.ToLower(resp.Header.Get("Content-Type")), "application/json")
 }
 
 // edgeErrorAsJSON replaces an HTML error page with a JSON Notion error that
@@ -195,6 +245,43 @@ func shouldRetryResponse(resp *http.Response) bool {
 	}
 
 	return false
+}
+
+// isWriteGatewayTimeout reports whether resp is Notion's JSON
+// "gateway_timeout" 504 for a POST or PATCH. The write may have been saved,
+// so it must not be blindly replayed (see the type comment). The body is
+// buffered and restored so the caller can still read the error.
+func isWriteGatewayTimeout(req *http.Request, resp *http.Response) bool {
+	if resp.StatusCode != http.StatusGatewayTimeout {
+		return false
+	}
+	if req.Method != http.MethodPost && req.Method != http.MethodPatch {
+		return false
+	}
+	if !strings.HasPrefix(strings.ToLower(resp.Header.Get("Content-Type")), "application/json") {
+		return false
+	}
+	if resp.Body == nil {
+		return false
+	}
+	// Peek at most 64 KiB, then put the peeked bytes back in front of the
+	// unread remainder so the caller sees the full, untouched body.
+	orig := resp.Body
+	body, err := io.ReadAll(io.LimitReader(orig, 1<<16))
+	resp.Body = struct {
+		io.Reader
+		io.Closer
+	}{io.MultiReader(bytes.NewReader(body), orig), orig}
+	if err != nil {
+		return false
+	}
+	var apiErr struct {
+		Code string `json:"code"`
+	}
+	if json.Unmarshal(body, &apiErr) != nil {
+		return false
+	}
+	return apiErr.Code == "gateway_timeout"
 }
 
 // computeDelay returns the backoff for a given retry attempt. If the

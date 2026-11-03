@@ -27,11 +27,50 @@ output "task_titles" {
 }
 ```
 
+### Filtering and sorting
+
+`filter` and `sorts` take Notion's own [filter](https://developers.notion.com/reference/post-database-query-filter) and [sort](https://developers.notion.com/reference/post-database-query-sort) JSON, usually built with `jsonencode`. They're passed to the query unchanged, so newer conditions work as soon as Notion supports them. Examples include relative dates and `"me"` for people (2026-03-30), and arrays of values for select, status, and multi-select (2026-04-17).
+
+```terraform
+# Open tasks due by the end of today, soonest first
+data "notion_database_entries" "due_today" {
+  database = notion_database.tasks.id
+
+  filter = jsonencode({
+    and = [
+      { property = "Due", date = { on_or_before = "today" } },
+      { property = "Status", status = { does_not_equal = ["Done", "Cancelled"] } },
+    ]
+  })
+
+  sorts = jsonencode([
+    { property = "Due", direction = "ascending" },
+  ])
+}
+
+# Entries assigned to the user who authorized a public connection. With an
+# internal integration "me" matches nobody, see Notion's people filter docs.
+data "notion_database_entries" "mine" {
+  database = notion_database.tasks.id
+  filter = jsonencode({
+    property = "Assignee"
+    people   = { contains = "me" }
+  })
+}
+```
+
+A query that matches more than 10,000 rows returns a partial result with a warning (2026-04-20). A filter is the way to stay under that cap.
+
 ## Schema
 
 ### Required
 
 - `database` (String) The ID of the database to query.
+
+### Optional
+
+- `filter` (String) Notion filter object as JSON. Must be a JSON object.
+- `sorts` (String) Notion sorts array as JSON. Must be a JSON array.
 
 ### Read-Only
 
@@ -49,8 +88,8 @@ output "task_titles" {
     - **URL / Email / Phone** - raw string value
     - **People** - comma-separated user names
     - **Relation** - comma-separated page IDs
-    - **Formula** - computed result as string
-    - **Rollup** - aggregated result as string
+    - **Formula** - computed result as string. Empty when Notion returns `type: "unsupported"` because the formula depends on too many related pages or nested formulas (2026-08-05).
+    - **Rollup** - aggregated result as string. Empty when Notion returns `type: "unsupported"` for the same reason.
     - **Unique ID** - prefixed ID (e.g. `"PROJ-123"`)
     - **Created time / Last edited time** - RFC3339 timestamp
     - **Created by / Last edited by** - user name

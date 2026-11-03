@@ -7,7 +7,7 @@ description: |-
 
 # notion_block (Resource)
 
-Manages a content block on a Notion page or inside another block. Supports paragraphs, headings, lists, code blocks, callouts, equations, synced blocks, columns, and more.
+Manages a content block on a Notion page or inside another block. Supports paragraphs, headings (including `heading_4`), lists, code blocks, callouts, equations, synced blocks, columns, tabs, and more.
 
 ~> **Note:** Destroying a block archives it in Notion. Blocks cannot be moved after creation — changing `parent_id` or `after` forces replacement.
 
@@ -116,19 +116,55 @@ resource "notion_block" "col1_text" {
 }
 ```
 
+### Heading 4
+
+`heading_4` works like the other heading levels (Notion API 2026-03-30).
+
+```terraform
+resource "notion_block" "subsection" {
+  parent_id     = notion_page.my_page.id
+  type          = "heading_4"
+  rich_text     = "Details"
+  is_toggleable = true
+}
+```
+
+### Tabs
+
+A `tab` block is a tabbed container (Notion API 2026-03-25). List its tabs in `tab_items`, each with a label and an optional emoji icon. Notion stores each tab as a paragraph block, and its `id` is exported, so add a tab's content with `notion_block` resources whose `parent_id` is that tab's `id`.
+
+```terraform
+resource "notion_block" "tabs" {
+  parent_id = notion_page.my_page.id
+  type      = "tab"
+  tab_items = [
+    { label = "Overview", icon = "📋" },
+    { label = "Details" },
+  ]
+}
+
+resource "notion_block" "overview_text" {
+  parent_id = notion_block.tabs.tab_items[0].id
+  type      = "paragraph"
+  rich_text = "Shown in the Overview tab."
+}
+```
+
+Tabs are matched by position. Changing a label or icon updates that tab in place, and new entries are added at the end. Removing entries from the end deletes those tabs along with their content. Reordering is a relabel, so the content stays with the position, not the label. A tab block needs at least one tab, and `rich_text`, `rich_text_json`, `color`, and `icon` don't apply to the container itself.
+
 ## Schema
 
 ### Required
 
 - `parent_id` (String) The ID of the parent page or block. Changing this forces a new resource.
-- `type` (String) The block type. Changing this forces a new resource. Valid values: `paragraph`, `heading_1`, `heading_2`, `heading_3`, `bulleted_list_item`, `numbered_list_item`, `to_do`, `toggle`, `quote`, `callout`, `code`, `equation`, `divider`, `table_of_contents`, `bookmark`, `embed`, `image`, `synced_block`, `column_list`, `column`.
+- `type` (String) The block type. Changing this forces a new resource. Valid values: `paragraph`, `heading_1`, `heading_2`, `heading_3`, `heading_4`, `bulleted_list_item`, `numbered_list_item`, `to_do`, `toggle`, `quote`, `callout`, `code`, `equation`, `divider`, `table_of_contents`, `bookmark`, `embed`, `image`, `synced_block`, `column_list`, `column`, `tab`.
 
 ### Optional
 
 - `after` (String) Insert after this block ID. Changing this forces a new resource.
 - `rich_text` (String) Text content of the block. Supports markdown links: `[text](url)`.
 - `color` (String) Block color (e.g. `default`, `red`, `blue_background`).
-- `is_toggleable` (Boolean) Whether a heading block is toggleable.
+- `is_toggleable` (Boolean) Whether a heading block (`heading_1` to `heading_4`) is toggleable.
 - `checked` (Boolean) Whether a to-do block is checked.
 - `icon` (String) Emoji icon for callout blocks.
 - `language` (String) Programming language for code blocks.
@@ -137,6 +173,10 @@ resource "notion_block" "col1_text" {
 - `expression` (String) LaTeX expression for equation blocks.
 - `rich_text_json` (String) JSON-encoded array of Notion rich text objects. When set, takes precedence over `rich_text`. See [Notion Rich Text API](https://developers.notion.com/reference/rich-text) for the object format.
 - `synced_from` (String) Source block ID for synced block copies. Changing this forces a new resource.
+- `tab_items` (Attributes List) Tabs of a `tab` block, in order. Required for `tab` and not allowed on other types. Each entry has:
+  - `label` (String, Required) Tab label. Supports markdown links.
+  - `icon` (String, Optional) Emoji shown next to the label. A native Notion icon set in the app reads back as `""`. Notion's API can set or change a tab icon but can't remove it, so removing `icon` from a tab that has one fails before anything is sent. Remove the icon in the Notion app first, then from the config.
+  - `id` (String, Read-Only) Block ID of the tab. Use it as `parent_id` for the tab's content.
 
 ### Read-Only
 
@@ -151,6 +191,7 @@ resource "notion_block" "col1_text" {
 | `heading_1` | Heading 1 | rich_text, color, is_toggleable |
 | `heading_2` | Heading 2 | rich_text, color, is_toggleable |
 | `heading_3` | Heading 3 | rich_text, color, is_toggleable |
+| `heading_4` | Heading 4 | rich_text, color, is_toggleable |
 | `bulleted_list_item` | Bulleted list | rich_text, color |
 | `numbered_list_item` | Numbered list | rich_text, color |
 | `to_do` | To-do list | rich_text, checked, color |
@@ -167,6 +208,7 @@ resource "notion_block" "col1_text" {
 | `synced_block` | Synced block | synced_from |
 | `column_list` | Columns container | (none) |
 | `column` | Column | (none) |
+| `tab` | Tabs | tab_items |
 
 ## Import
 

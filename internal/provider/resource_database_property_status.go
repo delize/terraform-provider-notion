@@ -3,7 +3,10 @@ package provider
 import (
 	"context"
 	"fmt"
+	"slices"
+	"strings"
 
+	"github.com/hashicorp/terraform-plugin-framework/diag"
 	"github.com/hashicorp/terraform-plugin-framework/path"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema"
@@ -15,13 +18,15 @@ import (
 
 // notion_database_property_status manages a status property on a database.
 // Status was read-only until the 2026-03-19 Notion API change made it
-// creatable and updatable. Groups (To-do / In progress / Complete buckets) are
-// managed server-side based on the option set; the schema only exposes the
-// label-to-color map so users don't have to model group membership.
+// creatable and updatable. Since 2026-06-22 an option can be placed in a
+// group (To-do / In progress / Complete), and since 2026-10-22 the schema
+// reports which option is the default. Reads and writes go through
+// notion_status_property.go because the SDK models neither.
 
 var (
-	_ resource.Resource                = &DatabasePropertyStatusResource{}
-	_ resource.ResourceWithImportState = &DatabasePropertyStatusResource{}
+	_ resource.Resource                   = &DatabasePropertyStatusResource{}
+	_ resource.ResourceWithImportState    = &DatabasePropertyStatusResource{}
+	_ resource.ResourceWithValidateConfig = &DatabasePropertyStatusResource{}
 )
 
 type DatabasePropertyStatusResource struct {
@@ -29,10 +34,12 @@ type DatabasePropertyStatusResource struct {
 }
 
 type DatabasePropertyStatusModel struct {
-	ID       types.String `tfsdk:"id"`
-	Database types.String `tfsdk:"database"`
-	Name     types.String `tfsdk:"name"`
-	Options  types.Map    `tfsdk:"options"`
+	ID            types.String `tfsdk:"id"`
+	Database      types.String `tfsdk:"database"`
+	Name          types.String `tfsdk:"name"`
+	Options       types.Map    `tfsdk:"options"`
+	OptionGroups  types.Map    `tfsdk:"option_groups"`
+	DefaultOption types.String `tfsdk:"default_option"`
 }
 
 func NewDatabasePropertyStatusResource() resource.Resource {
@@ -72,11 +79,64 @@ func (r *DatabasePropertyStatusResource) Schema(_ context.Context, _ resource.Sc
 			},
 			"options": schema.MapAttribute{
 				Description: "Map of option label to color. Valid colors: default, gray, brown, orange, yellow, green, blue, purple, pink, red. " +
-					"Notion assigns options to the To-do / In progress / Complete groups server-side; group membership is not modeled here.",
+					"Changing an existing option's color updates it in place. Notion matches option names without regard to case.",
 				Required:    true,
 				ElementType: types.StringType,
 			},
+			"option_groups": schema.MapAttribute{
+				Description: "Map of option label to the group it belongs in: To-do, In progress, or Complete. " +
+					"Only the options listed here are managed. An option left out keeps its current group, and a new one goes to To-do.",
+				Optional:    true,
+				ElementType: types.StringType,
+			},
+			"default_option": schema.StringAttribute{
+				Description: "Name of the option a page gets when it has no explicit status, or null when none is configured. Set in Notion, read-only here.",
+				Computed:    true,
+			},
 		},
+	}
+}
+
+func (r *DatabasePropertyStatusResource) ValidateConfig(ctx context.Context, req resource.ValidateConfigRequest, resp *resource.ValidateConfigResponse) {
+	var cfg DatabasePropertyStatusModel
+	resp.Diagnostics.Append(req.Config.Get(ctx, &cfg)...)
+	if resp.Diagnostics.HasError() {
+		return
+	}
+	if cfg.OptionGroups.IsNull() || cfg.OptionGroups.IsUnknown() {
+		return
+	}
+
+	groups := map[string]types.String{}
+	resp.Diagnostics.Append(cfg.OptionGroups.ElementsAs(ctx, &groups, false)...)
+	if resp.Diagnostics.HasError() {
+		return
+	}
+	for label, g := range groups {
+		if g.IsNull() || g.IsUnknown() {
+			continue
+		}
+		if !slices.Contains(statusGroupNames, g.ValueString()) {
+			resp.Diagnostics.AddAttributeError(path.Root("option_groups").AtMapKey(label),
+				"Invalid status group",
+				fmt.Sprintf("%q is not a status group. Use one of: %s.", g.ValueString(), strings.Join(statusGroupNames, ", ")))
+		}
+	}
+
+	if cfg.Options.IsNull() || cfg.Options.IsUnknown() {
+		return
+	}
+	options := map[string]types.String{}
+	resp.Diagnostics.Append(cfg.Options.ElementsAs(ctx, &options, false)...)
+	if resp.Diagnostics.HasError() {
+		return
+	}
+	for label := range groups {
+		if _, ok := options[label]; !ok {
+			resp.Diagnostics.AddAttributeError(path.Root("option_groups").AtMapKey(label),
+				"Unknown status option",
+				fmt.Sprintf("%q is in option_groups but not in options. Every grouped option must also be listed in options.", label))
+		}
 	}
 }
 
@@ -99,31 +159,50 @@ func (r *DatabasePropertyStatusResource) Create(ctx context.Context, req resourc
 	if resp.Diagnostics.HasError() {
 		return
 	}
-
-	options, diags := buildSelectOptions(ctx, plan.Options)
-	resp.Diagnostics.Append(diags...)
+	r.write(ctx, &plan, "creating", &resp.Diagnostics)
 	if resp.Diagnostics.HasError() {
 		return
 	}
+	resp.Diagnostics.Append(resp.State.Set(ctx, &plan)...)
+}
 
-	db, err := r.client.Database.Update(ctx, notionapi.DatabaseID(plan.Database.ValueString()), &notionapi.DatabaseUpdateRequest{
-		Properties: notionapi.PropertyConfigs{
-			plan.Name.ValueString(): notionapi.StatusPropertyConfig{
-				Type:   notionapi.PropertyConfigStatus,
-				Status: notionapi.StatusConfig{Options: options},
-			},
-		},
-	})
+func (r *DatabasePropertyStatusResource) Update(ctx context.Context, req resource.UpdateRequest, resp *resource.UpdateResponse) {
+	var plan DatabasePropertyStatusModel
+	resp.Diagnostics.Append(req.Plan.Get(ctx, &plan)...)
+	if resp.Diagnostics.HasError() {
+		return
+	}
+	r.write(ctx, &plan, "updating", &resp.Diagnostics)
+	if resp.Diagnostics.HasError() {
+		return
+	}
+	resp.Diagnostics.Append(resp.State.Set(ctx, &plan)...)
+}
+
+// write sends the full option set (with any configured groups) and fills
+// the computed attributes from the response. options and option_groups keep
+// their planned values, and Read reports any drift on the next refresh.
+func (r *DatabasePropertyStatusResource) write(ctx context.Context, plan *DatabasePropertyStatusModel, verb string, diags *diag.Diagnostics) {
+	token, err := tokenForClient(r.client)
 	if err != nil {
-		resp.Diagnostics.AddError("Error creating status property", err.Error())
+		diags.AddError("Error "+verb+" status property", err.Error())
 		return
 	}
 
-	if prop, ok := db.Properties[plan.Name.ValueString()]; ok {
-		plan.ID = types.StringValue(string(prop.GetID()))
+	options, d := buildStatusOptions(ctx, plan.Options, plan.OptionGroups)
+	diags.Append(d...)
+	if diags.HasError() {
+		return
 	}
 
-	resp.Diagnostics.Append(resp.State.Set(ctx, &plan)...)
+	st, err := upsertStatusProperty(ctx, token, plan.Database.ValueString(), plan.Name.ValueString(), options)
+	if err != nil {
+		diags.AddError("Error "+verb+" status property", err.Error())
+		return
+	}
+
+	plan.ID = types.StringValue(st.ID)
+	plan.DefaultOption = types.StringPointerValue(st.DefaultOption)
 }
 
 func (r *DatabasePropertyStatusResource) Read(ctx context.Context, req resource.ReadRequest, resp *resource.ReadResponse) {
@@ -133,71 +212,49 @@ func (r *DatabasePropertyStatusResource) Read(ctx context.Context, req resource.
 		return
 	}
 
-	db, err := r.client.Database.Get(ctx, notionapi.DatabaseID(state.Database.ValueString()))
+	token, err := tokenForClient(r.client)
 	if err != nil {
 		resp.Diagnostics.AddError("Error reading database", err.Error())
 		return
 	}
 
-	found := false
-	for name, prop := range db.Properties {
-		if string(prop.GetID()) == state.ID.ValueString() || name == state.Name.ValueString() {
-			state.ID = types.StringValue(string(prop.GetID()))
-			state.Name = types.StringValue(name)
-
-			if statusProp, ok := prop.(*notionapi.StatusPropertyConfig); ok {
-				optionsMap := make(map[string]string)
-				for _, opt := range statusProp.Status.Options {
-					optionsMap[opt.Name] = string(opt.Color)
-				}
-				mapVal, diags := types.MapValueFrom(ctx, types.StringType, optionsMap)
-				resp.Diagnostics.Append(diags...)
-				state.Options = mapVal
-			}
-			found = true
-			break
-		}
+	st, found, err := readStatusProperty(ctx, token, state.Database.ValueString(), state.ID.ValueString(), state.Name.ValueString())
+	if err != nil {
+		resp.Diagnostics.AddError("Error reading database", err.Error())
+		return
 	}
-
 	if !found {
 		resp.State.RemoveResource(ctx)
 		return
 	}
 
+	state.ID = types.StringValue(st.ID)
+	state.Name = types.StringValue(st.Name)
+
+	if st.IsStatus {
+		mapVal, diags := types.MapValueFrom(ctx, types.StringType, st.Options)
+		resp.Diagnostics.Append(diags...)
+		state.Options = mapVal
+		state.DefaultOption = types.StringPointerValue(st.DefaultOption)
+
+		// Only the options the config manages are tracked, so groups set in
+		// the Notion UI for other options don't show up as drift.
+		if !state.OptionGroups.IsNull() && !state.OptionGroups.IsUnknown() {
+			prior := map[string]string{}
+			resp.Diagnostics.Append(state.OptionGroups.ElementsAs(ctx, &prior, false)...)
+			next := make(map[string]string, len(prior))
+			for label := range prior {
+				if g, ok := st.groupFor(label); ok {
+					next[label] = g
+				}
+			}
+			groupsVal, diags := types.MapValueFrom(ctx, types.StringType, next)
+			resp.Diagnostics.Append(diags...)
+			state.OptionGroups = groupsVal
+		}
+	}
+
 	resp.Diagnostics.Append(resp.State.Set(ctx, &state)...)
-}
-
-func (r *DatabasePropertyStatusResource) Update(ctx context.Context, req resource.UpdateRequest, resp *resource.UpdateResponse) {
-	var plan DatabasePropertyStatusModel
-	resp.Diagnostics.Append(req.Plan.Get(ctx, &plan)...)
-	if resp.Diagnostics.HasError() {
-		return
-	}
-
-	options, diags := buildSelectOptions(ctx, plan.Options)
-	resp.Diagnostics.Append(diags...)
-	if resp.Diagnostics.HasError() {
-		return
-	}
-
-	db, err := r.client.Database.Update(ctx, notionapi.DatabaseID(plan.Database.ValueString()), &notionapi.DatabaseUpdateRequest{
-		Properties: notionapi.PropertyConfigs{
-			plan.Name.ValueString(): notionapi.StatusPropertyConfig{
-				Type:   notionapi.PropertyConfigStatus,
-				Status: notionapi.StatusConfig{Options: options},
-			},
-		},
-	})
-	if err != nil {
-		resp.Diagnostics.AddError("Error updating status property", err.Error())
-		return
-	}
-
-	if prop, ok := db.Properties[plan.Name.ValueString()]; ok {
-		plan.ID = types.StringValue(string(prop.GetID()))
-	}
-
-	resp.Diagnostics.Append(resp.State.Set(ctx, &plan)...)
 }
 
 func (r *DatabasePropertyStatusResource) Delete(ctx context.Context, req resource.DeleteRequest, resp *resource.DeleteResponse) {
@@ -223,4 +280,26 @@ func (r *DatabasePropertyStatusResource) ImportState(ctx context.Context, req re
 
 	resp.State.SetAttribute(ctx, path.Root("database"), types.StringValue(databaseID))
 	resp.State.SetAttribute(ctx, path.Root("name"), types.StringValue(propName))
+}
+
+// buildStatusOptions turns the options and option_groups maps into the
+// request list. Output is sorted by name so request bodies are stable.
+func buildStatusOptions(ctx context.Context, optionsMap, groupsMap types.Map) ([]statusOptionRequest, diag.Diagnostics) {
+	var diags diag.Diagnostics
+	colors := map[string]string{}
+	diags.Append(optionsMap.ElementsAs(ctx, &colors, false)...)
+	groups := map[string]string{}
+	if !groupsMap.IsNull() && !groupsMap.IsUnknown() {
+		diags.Append(groupsMap.ElementsAs(ctx, &groups, false)...)
+	}
+	if diags.HasError() {
+		return nil, diags
+	}
+
+	out := make([]statusOptionRequest, 0, len(colors))
+	for name, color := range colors {
+		out = append(out, statusOptionRequest{Name: name, Color: color, Group: groups[name]})
+	}
+	slices.SortFunc(out, func(a, b statusOptionRequest) int { return strings.Compare(a.Name, b.Name) })
+	return out, diags
 }

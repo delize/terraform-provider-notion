@@ -59,14 +59,26 @@ func tokenForClient(client *notionapi.Client) (string, error) {
 	return v.(string), nil
 }
 
-// doNotionRequest performs an HTTP request against the Notion API with
-// 429-retry semantics matching the upstream SDK: retry up to
-// notionTrashMaxRetries times, honoring the Retry-After header. The caller
+// doNotionRequest performs an HTTP request against the Notion API using the
+// shim's default Notion-Version. See doNotionRequestWithVersion.
+func doNotionRequest(ctx context.Context, method, url, token string, reqBody []byte) (*http.Response, error) {
+	return doNotionRequestWithVersion(ctx, method, url, token, notionTrashAPIVersion, reqBody)
+}
+
+// doNotionRequestWithVersion performs an HTTP request against the Notion API
+// with 429-retry semantics matching the upstream SDK: retry up to
+// notionTrashMaxRetries times, honoring the Retry-After header. 5xx and edge
+// HTML responses are retried one layer down by retryTransport. The caller
 // owns closing the returned response body.
+//
+// Every direct-HTTP path in the provider should go through here. Notion now
+// enforces a workspace-wide rate limit shared by all connections
+// (2026-06-16) on top of the per-connection limit (2026-09-09), so a bare
+// http.DefaultClient call is far more likely to surface a 429 to the user.
 //
 // reqBody is passed by value (not as a Reader) so each retry attempt can
 // construct a fresh body without having to rewind a stream.
-func doNotionRequest(ctx context.Context, method, url, token string, reqBody []byte) (*http.Response, error) {
+func doNotionRequestWithVersion(ctx context.Context, method, url, token, notionVersion string, reqBody []byte) (*http.Response, error) {
 	for attempt := 0; ; attempt++ {
 		var body io.Reader
 		if reqBody != nil {
@@ -77,12 +89,12 @@ func doNotionRequest(ctx context.Context, method, url, token string, reqBody []b
 			return nil, err
 		}
 		req.Header.Set("Authorization", "Bearer "+token)
-		req.Header.Set("Notion-Version", notionTrashAPIVersion)
+		req.Header.Set("Notion-Version", notionVersion)
 		if reqBody != nil {
 			req.Header.Set("Content-Type", "application/json")
 		}
 
-		resp, err := trashHTTPClient.Do(req)
+		resp, err := httpClientForToken(token).Do(req)
 		if err != nil {
 			return nil, err
 		}

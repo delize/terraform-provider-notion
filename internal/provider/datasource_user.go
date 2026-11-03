@@ -17,10 +17,11 @@ type UserDataSource struct {
 }
 
 type UserDataSourceModel struct {
-	Email  types.String `tfsdk:"email"`
-	ID     types.String `tfsdk:"id"`
-	Name   types.String `tfsdk:"name"`
-	UserID types.String `tfsdk:"user_id"`
+	Email         types.String `tfsdk:"email"`
+	EmailVerified types.Bool   `tfsdk:"email_verified"`
+	ID            types.String `tfsdk:"id"`
+	Name          types.String `tfsdk:"name"`
+	UserID        types.String `tfsdk:"user_id"`
 }
 
 func NewUserDataSource() datasource.DataSource {
@@ -38,6 +39,10 @@ func (d *UserDataSource) Schema(_ context.Context, _ datasource.SchemaRequest, r
 			"email": schema.StringAttribute{
 				Description: "The email address of the user.",
 				Required:    true,
+			},
+			"email_verified": schema.BoolAttribute{
+				Description: "Whether Notion has verified the user's email address. Null when Notion doesn't return it.",
+				Computed:    true,
 			},
 			"id": schema.StringAttribute{
 				Description: "The ID of the user (same as user_id).",
@@ -75,36 +80,37 @@ func (d *UserDataSource) Read(ctx context.Context, req datasource.ReadRequest, r
 		return
 	}
 
-	// List all users and filter by email
-	var cursor notionapi.Cursor
-	targetEmail := config.Email.ValueString()
-
-	for {
-		users, err := d.client.User.List(ctx, &notionapi.Pagination{
-			StartCursor: cursor,
-			PageSize:    100,
-		})
-		if err != nil {
-			resp.Diagnostics.AddError("Error listing users", err.Error())
-			return
-		}
-
-		for _, user := range users.Results {
-			if user.Person != nil && user.Person.Email == targetEmail {
-				config.ID = types.StringValue(normalizeID(string(user.ID)))
-				config.Name = types.StringValue(user.Name)
-				config.UserID = types.StringValue(normalizeID(string(user.ID)))
-				resp.Diagnostics.Append(resp.State.Set(ctx, &config)...)
-				return
-			}
-		}
-
-		if !users.HasMore {
-			break
-		}
-		cursor = notionapi.Cursor(users.NextCursor)
+	token, err := tokenForClient(d.client)
+	if err != nil {
+		resp.Diagnostics.AddError("Error listing users", err.Error())
+		return
 	}
 
-	resp.Diagnostics.AddError("User not found",
-		fmt.Sprintf("No user found with email: %s", targetEmail))
+	// List all users and filter by email.
+	targetEmail := config.Email.ValueString()
+	var match *rawListedUser
+	err = listUsersRaw(ctx, token, func(users []rawListedUser) bool {
+		for _, u := range users {
+			if u.Person != nil && u.Person.Email == targetEmail {
+				match = &u
+				return false
+			}
+		}
+		return true
+	})
+	if err != nil {
+		resp.Diagnostics.AddError("Error listing users", err.Error())
+		return
+	}
+	if match == nil {
+		resp.Diagnostics.AddError("User not found",
+			fmt.Sprintf("No user found with email: %s", targetEmail))
+		return
+	}
+
+	config.ID = types.StringValue(normalizeID(match.ID))
+	config.Name = types.StringValue(match.Name)
+	config.UserID = types.StringValue(normalizeID(match.ID))
+	config.EmailVerified = types.BoolPointerValue(match.emailVerified())
+	resp.Diagnostics.Append(resp.State.Set(ctx, &config)...)
 }

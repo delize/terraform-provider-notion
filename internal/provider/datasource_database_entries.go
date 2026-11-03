@@ -1,7 +1,6 @@
 package provider
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -23,6 +22,8 @@ type DatabaseEntriesDataSource struct {
 
 type DatabaseEntriesDataSourceModel struct {
 	Database types.String             `tfsdk:"database"`
+	Filter   types.String             `tfsdk:"filter"`
+	Sorts    types.String             `tfsdk:"sorts"`
 	Entries  []DatabaseEntryDataModel `tfsdk:"entries"`
 }
 
@@ -48,6 +49,14 @@ func (d *DatabaseEntriesDataSource) Schema(_ context.Context, _ datasource.Schem
 			"database": schema.StringAttribute{
 				Description: "The ID of the database to query.",
 				Required:    true,
+			},
+			"filter": schema.StringAttribute{
+				Description: "Optional Notion filter object as JSON, usually built with jsonencode. Passed to the query unchanged, so every filter condition the API supports works.",
+				Optional:    true,
+			},
+			"sorts": schema.StringAttribute{
+				Description: "Optional Notion sorts array as JSON, usually built with jsonencode.",
+				Optional:    true,
 			},
 			"entries": schema.ListNestedAttribute{
 				Description: "List of database entries.",
@@ -98,11 +107,17 @@ func (d *DatabaseEntriesDataSource) Read(ctx context.Context, req datasource.Rea
 		return
 	}
 
+	q, err := parseEntriesQuery(config.Filter.ValueString(), config.Sorts.ValueString())
+	if err != nil {
+		resp.Diagnostics.AddError("Invalid database query", err.Error())
+		return
+	}
+
 	var entries []DatabaseEntryDataModel
 	var startCursor string
 
 	for {
-		result, err := d.queryDatabaseRaw(ctx, config.Database.ValueString(), startCursor)
+		result, err := d.queryDatabaseRaw(ctx, config.Database.ValueString(), q, startCursor)
 		if err != nil {
 			resp.Diagnostics.AddError("Error querying database", err.Error())
 			return
@@ -267,30 +282,66 @@ type rawRichText struct {
 
 // queryDatabaseRaw queries the Notion API directly, bypassing the SDK's
 // strict property type checking that fails on unsupported types like "place".
-func (d *DatabaseEntriesDataSource) queryDatabaseRaw(ctx context.Context, databaseID string, startCursor string) (*rawQueryResponse, error) {
+func (d *DatabaseEntriesDataSource) queryDatabaseRaw(ctx context.Context, databaseID string, q entriesQuery, startCursor string) (*rawQueryResponse, error) {
+	return queryDatabaseRawAt(ctx, notionAPIBaseURL, d.client.Token.String(), databaseID, q, startCursor)
+}
+
+// entriesQuery holds the optional filter and sorts, already validated as a
+// JSON object and a JSON array. They pass through to Notion untouched, so
+// any filter the API accepts works here, including relative dates and "me"
+// (2026-03-30) and multi-value select and status filters (2026-04-17).
+type entriesQuery struct {
+	Filter json.RawMessage
+	Sorts  json.RawMessage
+}
+
+// parseEntriesQuery validates the filter and sorts attributes. Empty strings
+// mean "not set".
+func parseEntriesQuery(filter, sorts string) (entriesQuery, error) {
+	var q entriesQuery
+	if strings.TrimSpace(filter) != "" {
+		var obj map[string]json.RawMessage
+		if err := json.Unmarshal([]byte(filter), &obj); err != nil || obj == nil {
+			return q, fmt.Errorf("filter must be a JSON object, for example jsonencode({ property = \"Status\", status = { equals = \"Done\" } })")
+		}
+		q.Filter = json.RawMessage(filter)
+	}
+	if strings.TrimSpace(sorts) != "" {
+		var arr []json.RawMessage
+		if err := json.Unmarshal([]byte(sorts), &arr); err != nil || arr == nil {
+			return q, fmt.Errorf("sorts must be a JSON array, for example jsonencode([{ property = \"Due\", direction = \"ascending\" }])")
+		}
+		q.Sorts = json.RawMessage(sorts)
+	}
+	return q, nil
+}
+
+func buildEntriesQueryBody(q entriesQuery, startCursor string) map[string]interface{} {
 	body := map[string]interface{}{
 		"page_size": 100,
 	}
 	if startCursor != "" {
 		body["start_cursor"] = startCursor
 	}
+	if q.Filter != nil {
+		body["filter"] = q.Filter
+	}
+	if q.Sorts != nil {
+		body["sorts"] = q.Sorts
+	}
+	return body
+}
 
-	bodyBytes, err := json.Marshal(body)
+func queryDatabaseRawAt(ctx context.Context, baseURL, token, databaseID string, q entriesQuery, startCursor string) (*rawQueryResponse, error) {
+	bodyBytes, err := json.Marshal(buildEntriesQueryBody(q, startCursor))
 	if err != nil {
 		return nil, fmt.Errorf("failed to marshal request: %w", err)
 	}
 
-	url := fmt.Sprintf("https://api.notion.com/v1/databases/%s/query", databaseID)
-	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(bodyBytes))
-	if err != nil {
-		return nil, fmt.Errorf("failed to create request: %w", err)
-	}
-
-	httpReq.Header.Set("Authorization", fmt.Sprintf("Bearer %s", d.client.Token.String()))
-	httpReq.Header.Set("Notion-Version", "2022-06-28")
-	httpReq.Header.Set("Content-Type", "application/json")
-
-	httpResp, err := http.DefaultClient.Do(httpReq)
+	url := fmt.Sprintf("%s/databases/%s/query", baseURL, databaseID)
+	// 2022-06-28 keeps the database-as-schema query shape this data source
+	// parses. The shared helper adds 429 and 5xx retry.
+	httpResp, err := doNotionRequestWithVersion(ctx, http.MethodPost, url, token, legacySchemaAPIVersion, bodyBytes)
 	if err != nil {
 		return nil, fmt.Errorf("failed to query database: %w", err)
 	}

@@ -8,6 +8,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/path"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema"
+	"github.com/hashicorp/terraform-plugin-framework/resource/schema/boolplanmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/planmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/stringdefault"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/stringplanmodifier"
@@ -17,8 +18,9 @@ import (
 )
 
 var (
-	_ resource.Resource                = &PageResource{}
-	_ resource.ResourceWithImportState = &PageResource{}
+	_ resource.Resource                   = &PageResource{}
+	_ resource.ResourceWithImportState    = &PageResource{}
+	_ resource.ResourceWithValidateConfig = &PageResource{}
 )
 
 type PageResource struct {
@@ -27,15 +29,30 @@ type PageResource struct {
 }
 
 type PageResourceModel struct {
-	ID             types.String         `tfsdk:"id"`
-	ParentPageID   types.String         `tfsdk:"parent_page_id"`
-	Title          types.String         `tfsdk:"title"`
-	URL            types.String         `tfsdk:"url"`
-	Icon           types.String         `tfsdk:"icon"`
-	Markdown       types.String         `tfsdk:"markdown"`
-	MarkdownInsert *MarkdownInsertModel `tfsdk:"markdown_insert"`
-	TemplateID     types.String         `tfsdk:"template_id"`
-	TemplateTimezone types.String       `tfsdk:"template_timezone"`
+	ID                types.String         `tfsdk:"id"`
+	ParentPageID      types.String         `tfsdk:"parent_page_id"`
+	Title             types.String         `tfsdk:"title"`
+	URL               types.String         `tfsdk:"url"`
+	Icon              types.String         `tfsdk:"icon"`
+	IconName          types.String         `tfsdk:"icon_name"`
+	IconColor         types.String         `tfsdk:"icon_color"`
+	IconURL           types.String         `tfsdk:"icon_url"`
+	IconCustomEmojiID types.String         `tfsdk:"icon_custom_emoji_id"`
+	IsLocked          types.Bool           `tfsdk:"is_locked"`
+	Position          types.String         `tfsdk:"position"`
+	AfterBlockID      types.String         `tfsdk:"after_block_id"`
+	Markdown          types.String         `tfsdk:"markdown"`
+	MarkdownInsert    *MarkdownInsertModel `tfsdk:"markdown_insert"`
+	TemplateID        types.String         `tfsdk:"template_id"`
+	TemplateTimezone  types.String         `tfsdk:"template_timezone"`
+}
+
+func (m *PageResourceModel) iconFields() iconFields {
+	return iconFields{Emoji: m.Icon, Name: m.IconName, Color: m.IconColor, URL: m.IconURL, CustomEmojiID: m.IconCustomEmojiID}
+}
+
+func (m *PageResourceModel) setIconFields(f iconFields) {
+	m.Icon, m.IconName, m.IconColor, m.IconURL, m.IconCustomEmojiID = f.Emoji, f.Name, f.Color, f.URL, f.CustomEmojiID
 }
 
 // MarkdownInsertModel represents a one-shot markdown insertion at the start or
@@ -83,10 +100,47 @@ func (r *PageResource) Schema(_ context.Context, _ resource.SchemaRequest, resp 
 				},
 			},
 			"icon": schema.StringAttribute{
-				Description: "Emoji icon for the page.",
+				Description: "Emoji icon for the page. Defaults to an empty string, so an emoji set in the Notion UI is removed on the next apply unless it's configured here. " +
+					"Conflicts with icon_name, icon_url, and icon_custom_emoji_id.",
 				Optional:    true,
 				Computed:    true,
 				Default:     stringdefault.StaticString(""),
+			},
+			"icon_name": schema.StringAttribute{
+				Description: "Native Notion icon name, such as `pizza` (2026-03-25). Notion returns its internal icon name, " +
+					"so use that rather than a picker alias to avoid a diff.",
+				Optional: true,
+			},
+			"icon_color": schema.StringAttribute{
+				Description: "Color of the native icon set with icon_name: gray, lightgray, brown, yellow, orange, green, blue, purple, pink, or red. Notion defaults to gray.",
+				Optional:    true,
+			},
+			"icon_url": schema.StringAttribute{
+				Description: "External image URL for the page icon. URLs from Notion's own icon set are rejected, use icon_name for those.",
+				Optional:    true,
+			},
+			"icon_custom_emoji_id": schema.StringAttribute{
+				Description: "ID of a custom emoji in the integration's workspace to use as the page icon.",
+				Optional:    true,
+			},
+			"is_locked": schema.BoolAttribute{
+				Description: "Whether the page is locked from editing in the Notion app. It does not block API updates. " +
+					"When unset, the current value is reported and left alone.",
+				Optional: true,
+				Computed: true,
+				PlanModifiers: []planmodifier.Bool{
+					boolplanmodifier.UseStateForUnknown(),
+				},
+			},
+			"position": schema.StringAttribute{
+				Description: "Where to create the page inside its parent: `page_start` or `page_end` (2026-01-15). " +
+					"Only used when the page is created. Changing it later does not move the page.",
+				Optional: true,
+			},
+			"after_block_id": schema.StringAttribute{
+				Description: "Create the page directly after this block in the parent page. Conflicts with position. " +
+					"Only used when the page is created.",
+				Optional: true,
 			},
 			"markdown": schema.StringAttribute{
 				Description: "Page content as enhanced markdown. Mutually exclusive with managing content via notion_block resources. " +
@@ -133,6 +187,26 @@ func (r *PageResource) Schema(_ context.Context, _ resource.SchemaRequest, resp 
 	}
 }
 
+func (r *PageResource) ValidateConfig(ctx context.Context, req resource.ValidateConfigRequest, resp *resource.ValidateConfigResponse) {
+	var cfg PageResourceModel
+	resp.Diagnostics.Append(req.Config.Get(ctx, &cfg)...)
+	if resp.Diagnostics.HasError() {
+		return
+	}
+	validateIconFields(cfg.iconFields(), &resp.Diagnostics)
+
+	if setString(cfg.Position) {
+		if p := cfg.Position.ValueString(); p != "page_start" && p != "page_end" {
+			resp.Diagnostics.AddAttributeError(path.Root("position"), "Invalid position",
+				fmt.Sprintf("%q is not a page position. Use page_start or page_end, or after_block_id to place it after a block.", p))
+		}
+		if setString(cfg.AfterBlockID) {
+			resp.Diagnostics.AddAttributeError(path.Root("after_block_id"), "Conflicting position attributes",
+				"Set either position or after_block_id, not both.")
+		}
+	}
+}
+
 func (r *PageResource) Configure(_ context.Context, req resource.ConfigureRequest, resp *resource.ConfigureResponse) {
 	if req.ProviderData == nil {
 		return
@@ -176,11 +250,52 @@ func (r *PageResource) Create(ctx context.Context, req resource.CreateRequest, r
 	if plan.ID.IsUnknown() || plan.ID.ValueString() == "" {
 		return
 	}
-	// The page exists from here on, so save it even when a later step such
-	// as markdown_insert or the icon update failed. With an error, Terraform
-	// marks it tainted and replaces it on the next apply. Returning without
-	// state would orphan the page.
+
+	if !resp.Diagnostics.HasError() {
+		r.applyCreateExtras(ctx, &plan, &resp.Diagnostics)
+	}
+	// The page exists from here on, so save it even when a later step
+	// failed. With an error, Terraform marks it tainted and replaces it on
+	// the next apply. Returning without state would orphan the page and the
+	// next apply would create a duplicate.
+	if plan.IsLocked.IsUnknown() {
+		plan.IsLocked = types.BoolValue(false)
+	}
 	resp.Diagnostics.Append(resp.State.Set(ctx, &plan)...)
+}
+
+func (r *PageResource) position(plan *PageResourceModel) map[string]interface{} {
+	return pagePositionRequest(plan.Position.ValueString(), plan.AfterBlockID.ValueString())
+}
+
+// applyCreateExtras sets a non-emoji icon and is_locked after the page
+// exists, on Notion-Version 2026-03-11. Every create path shares it, so the
+// template, markdown, and plain paths don't each need their own icon logic.
+// Locking runs last, after any markdown_insert.
+func (r *PageResource) applyCreateExtras(ctx context.Context, plan *PageResourceModel, diags *diag.Diagnostics) {
+	lockSet := !plan.IsLocked.IsNull() && !plan.IsLocked.IsUnknown()
+	if !plan.iconFields().managed() && !lockSet {
+		// Nothing to change. A new page starts unlocked, so skip the extra
+		// request.
+		plan.IsLocked = types.BoolValue(false)
+		return
+	}
+	token, err := tokenForClient(r.client)
+	if err != nil {
+		diags.AddError("Error setting page icon or lock", err.Error())
+		return
+	}
+
+	var icon map[string]interface{}
+	if plan.iconFields().managed() {
+		icon = plan.iconFields().request()
+	}
+	extras, err := patchContainerExtras(ctx, token, "pages", plan.ID.ValueString(), icon, false, plan.IsLocked)
+	if err != nil {
+		diags.AddError("Error setting page icon or lock", err.Error())
+		return
+	}
+	plan.IsLocked = types.BoolValue(extras.IsLocked)
 }
 
 func (r *PageResource) createWithTemplate(ctx context.Context, plan *PageResourceModel, resp *resource.CreateResponse) {
@@ -197,6 +312,7 @@ func (r *PageResource) createWithTemplate(ctx context.Context, plan *PageResourc
 		plan.Title.ValueString(),
 		plan.TemplateID.ValueString(),
 		plan.TemplateTimezone.ValueString(),
+		r.position(plan),
 	)
 	if err != nil {
 		resp.Diagnostics.AddError("Error creating page with template", err.Error())
@@ -215,11 +331,7 @@ func (r *PageResource) createWithTemplate(ctx context.Context, plan *PageResourc
 
 	if diags := r.applyMarkdownInsert(ctx, plan); diags != nil {
 		resp.Diagnostics.Append(diags...)
-		if resp.Diagnostics.HasError() {
-			return
-		}
 	}
-
 }
 
 func (r *PageResource) createWithMarkdown(ctx context.Context, plan *PageResourceModel, resp *resource.CreateResponse) {
@@ -228,6 +340,7 @@ func (r *PageResource) createWithMarkdown(ctx context.Context, plan *PageResourc
 		plan.ParentPageID.ValueString(),
 		plan.Title.ValueString(),
 		plan.Markdown.ValueString(),
+		r.position(plan),
 	)
 	if err != nil {
 		resp.Diagnostics.AddError("Error creating page with markdown", err.Error())
@@ -264,54 +377,76 @@ func (r *PageResource) createWithMarkdown(ctx context.Context, plan *PageResourc
 	} else {
 		plan.Icon = types.StringValue("")
 	}
-
 }
 
 func (r *PageResource) createWithoutMarkdown(ctx context.Context, plan *PageResourceModel, resp *resource.CreateResponse) {
-	params := &notionapi.PageCreateRequest{
-		Parent: notionapi.Parent{
-			Type:   notionapi.ParentTypePageID,
-			PageID: notionapi.PageID(plan.ParentPageID.ValueString()),
-		},
-		Properties: notionapi.Properties{
-			"title": notionapi.TitleProperty{
-				Type:  notionapi.PropertyTypeTitle,
-				Title: plainToRichText(plan.Title.ValueString()),
-			},
-		},
-	}
-
-	if plan.Icon.ValueString() != "" {
-		emoji := notionapi.Emoji(plan.Icon.ValueString())
-		params.Icon = &notionapi.Icon{
-			Type:  "emoji",
-			Emoji: &emoji,
+	// The SDK has no position field, so a configured position goes over
+	// direct HTTP. Everything else stays on the SDK path as before.
+	if position := r.position(plan); position != nil {
+		token, err := tokenForClient(r.client)
+		if err != nil {
+			resp.Diagnostics.AddError("Error creating page", err.Error())
+			return
 		}
-	}
-
-	page, err := r.client.Page.Create(ctx, params)
-	if err != nil {
-		resp.Diagnostics.AddError("Error creating page", err.Error())
-		return
-	}
-
-	plan.ID = types.StringValue(normalizeID(string(page.ID)))
-	plan.URL = types.StringValue(page.URL)
-	if page.Icon != nil && page.Icon.Emoji != nil {
-		plan.Icon = types.StringValue(string(*page.Icon.Emoji))
+		var icon map[string]interface{}
+		if plan.Icon.ValueString() != "" {
+			icon = iconFields{Emoji: plan.Icon}.request()
+		}
+		pageID, pageURL, err := createPagePlain(ctx, token, plan.ParentPageID.ValueString(), plan.Title.ValueString(), icon, position)
+		if err != nil {
+			resp.Diagnostics.AddError("Error creating page", err.Error())
+			return
+		}
+		plan.ID = types.StringValue(normalizeID(pageID))
+		plan.URL = types.StringValue(pageURL)
+		if plan.Icon.IsNull() {
+			plan.Icon = types.StringValue("")
+		}
 	} else {
-		plan.Icon = types.StringValue("")
+		params := &notionapi.PageCreateRequest{
+			Parent: notionapi.Parent{
+				Type:   notionapi.ParentTypePageID,
+				PageID: notionapi.PageID(plan.ParentPageID.ValueString()),
+			},
+			Properties: notionapi.Properties{
+				"title": notionapi.TitleProperty{
+					Type:  notionapi.PropertyTypeTitle,
+					Title: plainToRichText(plan.Title.ValueString()),
+				},
+			},
+		}
+
+		if plan.Icon.ValueString() != "" {
+			emoji := notionapi.Emoji(plan.Icon.ValueString())
+			params.Icon = &notionapi.Icon{
+				Type:  "emoji",
+				Emoji: &emoji,
+			}
+		}
+
+		page, err := r.client.Page.Create(ctx, params)
+		if err != nil {
+			resp.Diagnostics.AddError("Error creating page", err.Error())
+			return
+		}
+
+		plan.ID = types.StringValue(normalizeID(string(page.ID)))
+		plan.URL = types.StringValue(page.URL)
+		if page.Icon != nil && page.Icon.Emoji != nil {
+			plan.Icon = types.StringValue(string(*page.Icon.Emoji))
+		} else {
+			plan.Icon = types.StringValue("")
+		}
 	}
 
 	if diags := r.applyMarkdownInsert(ctx, plan); diags != nil {
 		resp.Diagnostics.Append(diags...)
-		if resp.Diagnostics.HasError() {
-			return
-		}
 	}
-
 }
 
+// Read fetches the page on Notion-Version 2026-03-11 in one call. That
+// version returns native icons, custom emoji, and is_locked, which the SDK's
+// 2022-06-28 Page type drops.
 func (r *PageResource) Read(ctx context.Context, req resource.ReadRequest, resp *resource.ReadResponse) {
 	var state PageResourceModel
 	resp.Diagnostics.Append(req.State.Get(ctx, &state)...)
@@ -319,28 +454,33 @@ func (r *PageResource) Read(ctx context.Context, req resource.ReadRequest, resp 
 		return
 	}
 
-	page, err := r.client.Page.Get(ctx, notionapi.PageID(state.ID.ValueString()))
+	token, err := tokenForClient(r.client)
+	if err != nil {
+		resp.Diagnostics.AddError("Error reading page", err.Error())
+		return
+	}
+	page, err := getPageRaw(ctx, token, state.ID.ValueString())
 	if err != nil {
 		resp.Diagnostics.AddError("Error reading page", err.Error())
 		return
 	}
 
-	if page.Archived {
+	if page.InTrash {
 		resp.State.RemoveResource(ctx)
 		return
 	}
 
-	state.ID = types.StringValue(normalizeID(string(page.ID)))
+	state.ID = types.StringValue(normalizeID(page.ID))
 	state.URL = types.StringValue(page.URL)
+	state.IsLocked = types.BoolValue(page.IsLocked)
 
-	if page.Parent.Type == notionapi.ParentTypePageID {
-		state.ParentPageID = types.StringValue(normalizeID(string(page.Parent.PageID)))
+	if page.Parent.Type == "page_id" {
+		state.ParentPageID = types.StringValue(normalizeID(page.Parent.PageID))
 	} else {
 		// 2026-05-11: pages can now be parented by an agent ({"type": "agent_id"}).
-		// The SDK is pinned to an older Notion-Version and doesn't model that
-		// type, so anything other than page_id falls through here. Surface a
-		// warning so the user notices the parent moved out from under
-		// Terraform instead of silently keeping the old parent_page_id in state.
+		// Anything other than page_id falls through here. Surface a warning so
+		// the user notices the parent moved out from under Terraform instead of
+		// silently keeping the old parent_page_id in state.
 		resp.Diagnostics.AddWarning(
 			"Page parent type changed",
 			fmt.Sprintf("Page %s now has parent type %q (Terraform-managed pages expect page_id). "+
@@ -351,17 +491,11 @@ func (r *PageResource) Read(ctx context.Context, req resource.ReadRequest, resp 
 		)
 	}
 
-	if titleProp, ok := page.Properties["title"]; ok {
-		if tp, ok := titleProp.(*notionapi.TitleProperty); ok {
-			state.Title = types.StringValue(richTextToPlain(tp.Title))
-		}
+	if title, ok := page.title(); ok {
+		state.Title = types.StringValue(title)
 	}
 
-	if page.Icon != nil && page.Icon.Emoji != nil {
-		state.Icon = types.StringValue(string(*page.Icon.Emoji))
-	} else {
-		state.Icon = types.StringValue("")
-	}
+	state.setIconFields(state.iconFields().reconcile(parseIcon(page.Icon)))
 
 	// Markdown is managed by the user's config; we don't read it back from the
 	// API to avoid perpetual diffs caused by Notion's content normalization.
@@ -370,15 +504,17 @@ func (r *PageResource) Read(ctx context.Context, req resource.ReadRequest, resp 
 }
 
 func (r *PageResource) Update(ctx context.Context, req resource.UpdateRequest, resp *resource.UpdateResponse) {
-	var plan PageResourceModel
+	var plan, state, config PageResourceModel
 	resp.Diagnostics.Append(req.Plan.Get(ctx, &plan)...)
+	resp.Diagnostics.Append(req.State.Get(ctx, &state)...)
+	resp.Diagnostics.Append(req.Config.Get(ctx, &config)...)
 	if resp.Diagnostics.HasError() {
 		return
 	}
 
-	var state PageResourceModel
-	resp.Diagnostics.Append(req.State.Get(ctx, &state)...)
-	if resp.Diagnostics.HasError() {
+	token, err := tokenForClient(r.client)
+	if err != nil {
+		resp.Diagnostics.AddError("Error updating page", err.Error())
 		return
 	}
 
@@ -386,44 +522,46 @@ func (r *PageResource) Update(ctx context.Context, req resource.UpdateRequest, r
 	// Done before the title/icon Update so the rest of the update lands on the
 	// page already at its new location.
 	if plan.ParentPageID.ValueString() != state.ParentPageID.ValueString() {
-		token, err := tokenForClient(r.client)
-		if err != nil {
-			resp.Diagnostics.AddError("Error moving page", err.Error())
-			return
-		}
 		if err := movePage(ctx, token, plan.ID.ValueString(), plan.ParentPageID.ValueString()); err != nil {
 			resp.Diagnostics.AddError("Error moving page", err.Error())
 			return
 		}
 	}
 
-	// Update page properties (title, icon)
-	params := &notionapi.PageUpdateRequest{
-		Properties: notionapi.Properties{
-			"title": notionapi.TitleProperty{
-				Type:  notionapi.PropertyTypeTitle,
-				Title: plainToRichText(plan.Title.ValueString()),
+	if plan.Position.ValueString() != state.Position.ValueString() || plan.AfterBlockID.ValueString() != state.AfterBlockID.ValueString() {
+		resp.Diagnostics.AddWarning("Page position is only used at creation",
+			"position and after_block_id only place a page when it is created. The new value is stored, but the existing page does not move.")
+	}
+
+	// One PATCH on 2026-03-11 for title, icon, and lock. The SDK path can't
+	// send native icons, custom emoji, or is_locked.
+	body := map[string]interface{}{
+		"properties": map[string]interface{}{
+			"title": map[string]interface{}{
+				"title": plainToRichText(plan.Title.ValueString()),
 			},
 		},
 	}
-
-	if plan.Icon.ValueString() != "" {
-		emoji := notionapi.Emoji(plan.Icon.ValueString())
-		params.Icon = &notionapi.Icon{
-			Type:  "emoji",
-			Emoji: &emoji,
-		}
+	if icon := plan.iconFields().request(); icon != nil {
+		body["icon"] = icon
+	} else if state.Icon.ValueString() != "" || state.iconFields().managed() {
+		// Every icon attribute was removed from the config, so clear it.
+		body["icon"] = nil
+	}
+	if !config.IsLocked.IsNull() && !config.IsLocked.IsUnknown() {
+		body["is_locked"] = config.IsLocked.ValueBool()
 	}
 
-	page, err := r.client.Page.Update(ctx, notionapi.PageID(plan.ID.ValueString()), params)
+	page, err := updatePageRaw(ctx, token, plan.ID.ValueString(), body)
 	if err != nil {
 		resp.Diagnostics.AddError("Error updating page", err.Error())
 		return
 	}
 
 	plan.URL = types.StringValue(page.URL)
-	if page.Icon != nil && page.Icon.Emoji != nil {
-		plan.Icon = types.StringValue(string(*page.Icon.Emoji))
+	plan.IsLocked = types.BoolValue(page.IsLocked)
+	if p := parseIcon(page.Icon); p.Type == "emoji" {
+		plan.Icon = types.StringValue(p.Emoji)
 	} else {
 		plan.Icon = types.StringValue("")
 	}

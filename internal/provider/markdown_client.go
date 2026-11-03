@@ -1,7 +1,6 @@
 package provider
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -29,28 +28,23 @@ func newMarkdownClient(client *notionapi.Client) *markdownClient {
 	return &markdownClient{token: client.Token.String()}
 }
 
+// Creates and inserts add content each time they run and have no
+// idempotency key, so those methods pass withNoReplay. A replace is safe
+// to resend and keeps the normal retries.
 func (mc *markdownClient) doRequest(ctx context.Context, method, url string, body interface{}) ([]byte, error) {
-	var reqBody io.Reader
+	var reqBody []byte
 	if body != nil {
 		b, err := json.Marshal(body)
 		if err != nil {
 			return nil, fmt.Errorf("failed to marshal request body: %w", err)
 		}
-		reqBody = bytes.NewReader(b)
+		reqBody = b
 	}
 
-	req, err := http.NewRequestWithContext(ctx, method, url, reqBody)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create request: %w", err)
-	}
-
-	req.Header.Set("Authorization", fmt.Sprintf("Bearer %s", mc.token))
-	req.Header.Set("Notion-Version", markdownAPIVersion)
-	if body != nil {
-		req.Header.Set("Content-Type", "application/json")
-	}
-
-	resp, err := http.DefaultClient.Do(req)
+	// Shared helper: 429 retry with Retry-After, plus 5xx retry in
+	// retryTransport. Previously this used http.DefaultClient and surfaced
+	// every rate limit straight to the user.
+	resp, err := doNotionRequestWithVersion(ctx, method, url, mc.token, markdownAPIVersion, reqBody)
 	if err != nil {
 		return nil, fmt.Errorf("request failed: %w", err)
 	}
@@ -75,7 +69,7 @@ func (mc *markdownClient) CreatePageWithMarkdown(ctx context.Context, parentPage
 		"markdown": markdown,
 	}
 
-	respBody, err := mc.doRequest(ctx, http.MethodPost, "https://api.notion.com/v1/pages", body)
+	respBody, err := mc.doRequest(withNoReplay(ctx), http.MethodPost, "https://api.notion.com/v1/pages", body)
 	if err != nil {
 		return nil, err
 	}
@@ -98,7 +92,8 @@ func (mc *markdownClient) CreatePageWithMarkdown(ctx context.Context, parentPage
 }
 
 // CreatePageWithMarkdownAndTitle creates a page with both a title property and markdown content.
-func (mc *markdownClient) CreatePageWithMarkdownAndTitle(ctx context.Context, parentPageID, title, markdown string) (string, string, error) {
+// position is the optional create-time placement (2026-01-15), nil to omit.
+func (mc *markdownClient) CreatePageWithMarkdownAndTitle(ctx context.Context, parentPageID, title, markdown string, position map[string]interface{}) (string, string, error) {
 	body := map[string]interface{}{
 		"parent":   map[string]string{"page_id": parentPageID},
 		"markdown": markdown,
@@ -111,8 +106,11 @@ func (mc *markdownClient) CreatePageWithMarkdownAndTitle(ctx context.Context, pa
 			},
 		},
 	}
+	if position != nil {
+		body["position"] = position
+	}
 
-	respBody, err := mc.doRequest(ctx, http.MethodPost, "https://api.notion.com/v1/pages", body)
+	respBody, err := mc.doRequest(withNoReplay(ctx), http.MethodPost, "https://api.notion.com/v1/pages", body)
 	if err != nil {
 		return "", "", err
 	}
@@ -136,7 +134,7 @@ func (mc *markdownClient) CreateDatabaseEntryWithMarkdown(ctx context.Context, d
 		"properties": properties,
 	}
 
-	respBody, err := mc.doRequest(ctx, http.MethodPost, "https://api.notion.com/v1/pages", body)
+	respBody, err := mc.doRequest(withNoReplay(ctx), http.MethodPost, "https://api.notion.com/v1/pages", body)
 	if err != nil {
 		return "", "", err
 	}
@@ -154,7 +152,14 @@ func (mc *markdownClient) CreateDatabaseEntryWithMarkdown(ctx context.Context, d
 
 // GetPageMarkdown retrieves a page's content as markdown.
 func (mc *markdownClient) GetPageMarkdown(ctx context.Context, pageID string) (*PageMarkdownResponse, error) {
-	url := fmt.Sprintf("https://api.notion.com/v1/pages/%s/markdown", pageID)
+	return mc.GetPageMarkdownWithTranscript(ctx, pageID, false)
+}
+
+// GetPageMarkdownWithTranscript retrieves a page's markdown, optionally with
+// full AI meeting note transcripts (include_transcript, 2026-02-26). Without
+// it, Notion renders a placeholder linking to each meeting note.
+func (mc *markdownClient) GetPageMarkdownWithTranscript(ctx context.Context, pageID string, includeTranscript bool) (*PageMarkdownResponse, error) {
+	url := pageMarkdownURL(pageID, includeTranscript)
 
 	respBody, err := mc.doRequest(ctx, http.MethodGet, url, nil)
 	if err != nil {
@@ -171,6 +176,14 @@ func (mc *markdownClient) GetPageMarkdown(ctx context.Context, pageID string) (*
 	}
 
 	return &result, nil
+}
+
+func pageMarkdownURL(pageID string, includeTranscript bool) string {
+	u := fmt.Sprintf("%s/pages/%s/markdown", notionAPIBaseURL, pageID)
+	if includeTranscript {
+		u += "?include_transcript=true"
+	}
+	return u
 }
 
 // ReplacePageMarkdown replaces all content in a page with new markdown.
@@ -213,7 +226,7 @@ func (mc *markdownClient) InsertPageMarkdown(ctx context.Context, pageID, markdo
 	url := fmt.Sprintf("https://api.notion.com/v1/pages/%s/markdown", pageID)
 	body := insertContentBody(markdown, position)
 
-	respBody, err := mc.doRequest(ctx, http.MethodPatch, url, body)
+	respBody, err := mc.doRequest(withNoReplay(ctx), http.MethodPatch, url, body)
 	if err != nil {
 		return nil, err
 	}
