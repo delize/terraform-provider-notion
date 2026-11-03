@@ -209,6 +209,7 @@ func (r *DatabaseEntryResource) createWithMarkdown(ctx context.Context, plan *Da
 
 	plan.ID = types.StringValue(normalizeID(created.ID))
 	plan.URL = types.StringValue(created.URL)
+	appendMarkdownWarnings(&resp.Diagnostics, created.ID, created.Warnings)
 
 	resp.Diagnostics.Append(resp.State.Set(ctx, plan)...)
 }
@@ -330,12 +331,13 @@ func (r *DatabaseEntryResource) Update(ctx context.Context, req resource.UpdateR
 	// would overwrite edits made in the Notion UI whenever an unrelated
 	// attribute such as the title changed.
 	if markdownNeedsReplace(plan.Markdown, state.Markdown, plan.MarkdownVersion, state.MarkdownVersion) {
-		_, err = r.mdClient.ReplacePageMarkdown(ctx, plan.ID.ValueString(), plan.Markdown.ValueString(),
+		replaced, err := r.mdClient.ReplacePageMarkdown(ctx, plan.ID.ValueString(), plan.Markdown.ValueString(),
 			r.mdClient.resolveMarkdownVersion(plan.MarkdownVersion))
 		if err != nil {
 			resp.Diagnostics.AddError("Error updating entry markdown", err.Error())
 			return
 		}
+		appendMarkdownWarnings(&resp.Diagnostics, plan.ID.ValueString(), replaced.Warnings)
 		// Keep plan value in state rather than API response to avoid normalization diffs
 	}
 

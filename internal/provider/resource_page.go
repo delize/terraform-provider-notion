@@ -351,6 +351,7 @@ func (r *PageResource) createWithMarkdown(ctx context.Context, plan *PageResourc
 		return
 	}
 	pageID, pageURL := created.ID, created.URL
+	appendMarkdownWarnings(&resp.Diagnostics, pageID, created.Warnings)
 
 	plan.ID = types.StringValue(normalizeID(pageID))
 	plan.URL = types.StringValue(pageURL)
@@ -576,12 +577,13 @@ func (r *PageResource) Update(ctx context.Context, req resource.UpdateRequest, r
 	// would overwrite edits made in the Notion UI whenever an unrelated
 	// attribute such as the title changed.
 	if markdownNeedsReplace(plan.Markdown, state.Markdown, plan.MarkdownVersion, state.MarkdownVersion) {
-		_, err = r.mdClient.ReplacePageMarkdown(ctx, plan.ID.ValueString(), plan.Markdown.ValueString(),
+		replaced, err := r.mdClient.ReplacePageMarkdown(ctx, plan.ID.ValueString(), plan.Markdown.ValueString(),
 			r.mdClient.resolveMarkdownVersion(plan.MarkdownVersion))
 		if err != nil {
 			resp.Diagnostics.AddError("Error updating page markdown", err.Error())
 			return
 		}
+		appendMarkdownWarnings(&resp.Diagnostics, plan.ID.ValueString(), replaced.Warnings)
 		// Keep plan value in state rather than API response to avoid normalization diffs
 	}
 
@@ -606,7 +608,7 @@ func (r *PageResource) applyMarkdownInsert(ctx context.Context, plan *PageResour
 		return nil
 	}
 
-	_, err := r.mdClient.InsertPageMarkdown(
+	inserted, err := r.mdClient.InsertPageMarkdown(
 		ctx,
 		plan.ID.ValueString(),
 		plan.MarkdownInsert.Content.ValueString(),
@@ -618,7 +620,9 @@ func (r *PageResource) applyMarkdownInsert(ctx context.Context, plan *PageResour
 		diags.AddError("Error inserting markdown into page", err.Error())
 		return diags
 	}
-	return nil
+	var diags diag.Diagnostics
+	appendMarkdownWarnings(&diags, plan.ID.ValueString(), inserted.Warnings)
+	return diags
 }
 
 func (r *PageResource) Delete(ctx context.Context, req resource.DeleteRequest, resp *resource.DeleteResponse) {
