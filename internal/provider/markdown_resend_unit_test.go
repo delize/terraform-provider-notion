@@ -140,6 +140,9 @@ func entryModel(id, title, markdown, version string) DatabaseEntryResourceModel 
 		EmailProperties:       types.MapNull(types.StringType),
 		PhoneNumberProperties: types.MapNull(types.StringType),
 		DateProperties:        types.MapNull(types.StringType),
+		MultiSelectProperties: types.MapNull(entryListElemType),
+		RelationProperties:    types.MapNull(entryListElemType),
+		PeopleProperties:      types.MapNull(entryListElemType),
 	}
 }
 

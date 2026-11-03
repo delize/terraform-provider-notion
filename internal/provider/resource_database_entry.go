@@ -17,9 +17,10 @@ import (
 )
 
 var (
-	_ resource.Resource                = &DatabaseEntryResource{}
-	_ resource.ResourceWithImportState = &DatabaseEntryResource{}
-	_ resource.ResourceWithModifyPlan  = &DatabaseEntryResource{}
+	_ resource.Resource                   = &DatabaseEntryResource{}
+	_ resource.ResourceWithImportState    = &DatabaseEntryResource{}
+	_ resource.ResourceWithModifyPlan     = &DatabaseEntryResource{}
+	_ resource.ResourceWithValidateConfig = &DatabaseEntryResource{}
 )
 
 type DatabaseEntryResource struct {
@@ -43,6 +44,9 @@ type DatabaseEntryResourceModel struct {
 	EmailProperties       types.Map    `tfsdk:"email_properties"`
 	PhoneNumberProperties types.Map    `tfsdk:"phone_number_properties"`
 	DateProperties        types.Map    `tfsdk:"date_properties"`
+	MultiSelectProperties types.Map    `tfsdk:"multi_select_properties"`
+	RelationProperties    types.Map    `tfsdk:"relation_properties"`
+	PeopleProperties      types.Map    `tfsdk:"people_properties"`
 }
 
 func NewDatabaseEntryResource() resource.Resource {
@@ -132,6 +136,25 @@ func (r *DatabaseEntryResource) Schema(_ context.Context, _ resource.SchemaReque
 				Description: "Map of date property name to ISO 8601 date string.",
 				Optional:    true,
 				ElementType: types.StringType,
+			},
+			"multi_select_properties": schema.MapAttribute{
+				Description: "Map of multi-select property name to the list of selected option names. " +
+					"A name that isn't an option yet is added to the property's options by Notion. " +
+					"An empty list clears the value. At most 100 names per property.",
+				Optional:    true,
+				ElementType: entryListElemType,
+			},
+			"relation_properties": schema.MapAttribute{
+				Description: "Map of relation property name to the list of related page IDs. The list replaces the whole relation. " +
+					"IDs may be given with or without hyphens. An empty list clears the value. At most 100 IDs per property.",
+				Optional:    true,
+				ElementType: entryListElemType,
+			},
+			"people_properties": schema.MapAttribute{
+				Description: "Map of people property name to the list of user IDs. The list replaces the whole value. " +
+					"IDs may be given with or without hyphens. An empty list clears the value. At most 100 IDs per property.",
+				Optional:    true,
+				ElementType: entryListElemType,
 			},
 		},
 	}
@@ -281,6 +304,19 @@ func (r *DatabaseEntryResource) Read(ctx context.Context, req resource.ReadReque
 		if tp, ok := prop.(*notionapi.TitleProperty); ok {
 			state.Title = types.StringValue(richTextToPlain(tp.Title))
 			break
+		}
+	}
+
+	// Relation and people values are capped at 25 in a page response.
+	// Fetch the full list for configured keys that may have been cut off.
+	if needsListExpansion(page, &state) {
+		token, err := tokenForClient(r.client)
+		if err == nil {
+			err = expandTruncatedLists(ctx, token, page, &state)
+		}
+		if err != nil {
+			resp.Diagnostics.AddError("Error reading database entry", err.Error())
+			return
 		}
 	}
 
@@ -493,6 +529,8 @@ func buildEntryProperties(ctx context.Context, plan *DatabaseEntryResourceModel,
 		}
 	}
 
+	buildEntryListProperties(ctx, plan, diags, props)
+
 	return props
 }
 
@@ -626,6 +664,8 @@ func readEntryProperties(page *notionapi.Page, state *DatabaseEntryResourceModel
 		diags.Append(d...)
 		state.DateProperties = m
 	}
+
+	readEntryListProperties(page, state, diags)
 }
 
 // removedKeys returns keys present in stateMap but absent from planMap.
@@ -704,6 +744,7 @@ func clearRemovedProperties(state, plan *DatabaseEntryResourceModel, props notio
 			Date: nil,
 		}
 	}
+	clearRemovedListProperties(state, plan, props)
 }
 
 // formatNotionDate formats a Notion Date as date-only (2006-01-02) when the time
