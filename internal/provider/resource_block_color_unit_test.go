@@ -102,3 +102,21 @@ resource "notion_block" "p" {
 		},
 	})
 }
+
+// An import starts from empty state, so attributes the block type doesn't
+// use must come back as their schema defaults, the same as after a create.
+func TestReadBlockIntoState_ImportFillsDefaults(t *testing.T) {
+	var state BlockResourceModel
+	readBlockIntoState(&notionapi.Heading1Block{Heading1: notionapi.Heading{Color: "default"}}, &state)
+	for name, v := range map[string]types.String{
+		"color": state.Color, "icon": state.Icon, "language": state.Language,
+		"caption": state.Caption, "url": state.URL, "expression": state.Expression,
+	} {
+		if v.IsNull() || v.ValueString() != "" {
+			t.Errorf("%s = %v, want \"\"", name, v)
+		}
+	}
+	if state.Checked.IsNull() || state.Checked.ValueBool() || state.IsToggleable.IsNull() {
+		t.Errorf("checked = %v, is_toggleable = %v, want false", state.Checked, state.IsToggleable)
+	}
+}
