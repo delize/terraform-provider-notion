@@ -66,6 +66,11 @@ jobs:
       TF_ACC: "1"
       NOTION_TOKEN: ${{ secrets.NOTION_TOKEN }}
       NOTION_TEST_PARENT_PAGE_ID: ${{ secrets.NOTION_TEST_PARENT_PAGE_ID }}
+      # Optional. Tests that need these skip when the secret is unset.
+      NOTION_TEST_TEMPLATE_ID: ${{ secrets.NOTION_TEST_TEMPLATE_ID }}
+      NOTION_TEST_VIEW_DATABASE_ID: ${{ secrets.NOTION_TEST_VIEW_DATABASE_ID }}
+      NOTION_TEST_VIEW_ID: ${{ secrets.NOTION_TEST_VIEW_ID }}
+      NOTION_TEST_AGENT_ID: ${{ secrets.NOTION_TEST_AGENT_ID }}
       GITHUB_PR_NUMBER: ${{ github.event.pull_request.number }}
     steps:
       - uses: actions/checkout@v7

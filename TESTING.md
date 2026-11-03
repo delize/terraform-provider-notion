@@ -87,3 +87,18 @@ end up in the workspace trash, not hard-deleted.
 `acceptance-result` exists so the required checks stay the same when the Terraform matrix changes. It passes only when `build` passed and every acceptance leg passed. On fork PRs it stays red on purpose, because acceptance for forks runs in the separate `Acceptance (fork)` workflow after a maintainer approves the `acceptance` environment. Once that run is green, merge the fork PR with the admin bypass.
 
 The acceptance matrix covers the three newest Terraform minor versions. When a new minor ships, add it and drop the oldest in both `test.yml` and `acceptance-fork.yml`.
+
+### Test workspace and secrets
+
+CI runs acceptance against the "Terraform Notion - TestBed" workspace through the "Github - Terraform" internal integration. Everything the tests touch lives under the page "Terraform acceptance tests", which is connected to that integration. The repository secrets are:
+
+| Secret | Points at | Needed by |
+|---|---|---|
+| `NOTION_TOKEN` | The integration's token | Every acceptance test |
+| `NOTION_TEST_PARENT_PAGE_ID` | "Terraform acceptance tests" | Page, database, entry, property, markdown, move, and comment tests |
+| `NOTION_TEST_TEMPLATE_ID` | "Terraform test template", a child page | `TestAccPageWithTemplate` |
+| `NOTION_TEST_VIEW_DATABASE_ID` | "Terraform view test database", a child database | `TestAccViewResource` |
+| `NOTION_TEST_VIEW_ID` | That database's default table view | `TestAccViewQueryDataSource` |
+| `NOTION_TEST_AGENT_ID` | Not set. The workspace plan has no Custom Agents. | Agent tests |
+
+A test whose secret is unset skips. Both workflow files pass every secret listed here, so a new one has to be added to `test.yml` and `acceptance-fork.yml`.
