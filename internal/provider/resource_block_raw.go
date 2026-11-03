@@ -17,7 +17,7 @@ import (
 // SDK path in resource_block.go.
 
 // rawBlockTypes lists the notion_block types handled here.
-var rawBlockTypes = map[string]bool{"heading_4": true, "tab": true, "callout": true}
+var rawBlockTypes = map[string]bool{"heading_4": true, "tab": true, "callout": true, "column_list": true}
 
 func isRawBlockType(t string) bool { return rawBlockTypes[t] }
 
@@ -47,6 +47,55 @@ func tabItemsToList(ctx context.Context, items []tabItemModel) (types.List, diag
 	return types.ListValueFrom(ctx, types.ObjectType{AttrTypes: tabItemAttrTypes}, items)
 }
 
+// columnAttrTypes is the object type of one columns element.
+var columnAttrTypes = map[string]attr.Type{
+	"id":          types.StringType,
+	"width_ratio": types.Float64Type,
+}
+
+var columnObjectType = types.ObjectType{AttrTypes: columnAttrTypes}
+
+type columnModel struct {
+	ID         types.String  `tfsdk:"id"`
+	WidthRatio types.Float64 `tfsdk:"width_ratio"`
+}
+
+func columnsFromList(ctx context.Context, l types.List) ([]columnModel, diag.Diagnostics) {
+	var cols []columnModel
+	if l.IsNull() || l.IsUnknown() {
+		return nil, nil
+	}
+	diags := l.ElementsAs(ctx, &cols, false)
+	return cols, diags
+}
+
+func columnsToList(ctx context.Context, cols []columnModel) (types.List, diag.Diagnostics) {
+	return types.ListValueFrom(ctx, columnObjectType, cols)
+}
+
+func (m columnModel) spec() columnSpec {
+	if m.WidthRatio.IsNull() || m.WidthRatio.IsUnknown() {
+		return columnSpec{}
+	}
+	v := m.WidthRatio.ValueFloat64()
+	return columnSpec{WidthRatio: &v}
+}
+
+// widthRatioValue is a width_ratio from Notion as a state value.
+func widthRatioValue(c *rawColumn) types.Float64 {
+	if c == nil || c.WidthRatio == nil {
+		return types.Float64Null()
+	}
+	return types.Float64Value(*c.WidthRatio)
+}
+
+// sameRatio reports whether two ratios match closely enough that a float
+// round trip through Notion isn't drift.
+func sameRatio(a, b float64) bool {
+	d := a - b
+	return d < 1e-6 && d > -1e-6
+}
+
 func (m tabItemModel) spec() tabItemSpec {
 	return tabItemSpec{Label: m.Label.ValueString(), Icon: m.Icon.ValueString()}
 }
@@ -64,6 +113,7 @@ func (r *BlockResource) createRawBlock(ctx context.Context, plan *BlockResourceM
 
 	var block map[string]interface{}
 	var items []tabItemModel
+	var cols []columnModel
 	switch plan.Type.ValueString() {
 	case "heading_4":
 		rt, err := resolveRichText(*plan)
@@ -97,6 +147,16 @@ func (r *BlockResource) createRawBlock(ctx context.Context, plan *BlockResourceM
 			specs[i] = it.spec()
 		}
 		block = tabBlock(specs)
+	case "column_list":
+		cols, diags = columnsFromList(ctx, plan.Columns)
+		if diags.HasError() {
+			return diags
+		}
+		specs := make([]columnSpec, len(cols))
+		for i, c := range cols {
+			specs[i] = c.spec()
+		}
+		block = columnListBlock(specs)
 	}
 
 	after := ""
@@ -146,6 +206,38 @@ func (r *BlockResource) createRawBlock(ctx context.Context, plan *BlockResourceM
 		diags.Append(d...)
 		plan.TabItems = list
 	}
+
+	if plan.Type.ValueString() == "column_list" {
+		children, err := listBlockChildrenRaw(ctx, token, created.ID)
+		found := columnChildren(children)
+		switch {
+		case err != nil:
+			diags.AddError("Error reading new columns", err.Error())
+		case len(found) != len(cols):
+			diags.AddError("Error reading new columns",
+				fmt.Sprintf("created %d columns but Notion returned %d", len(cols), len(found)))
+		default:
+			for i := range cols {
+				cols[i].ID = types.StringValue(normalizeID(found[i].ID))
+				if cols[i].WidthRatio.IsUnknown() {
+					cols[i].WidthRatio = widthRatioValue(found[i].Column)
+				}
+			}
+		}
+		// Same as tabs, a failed read leaves nulls so the block is saved
+		// and tainted instead of orphaned.
+		for i := range cols {
+			if cols[i].ID.IsUnknown() {
+				cols[i].ID = types.StringNull()
+			}
+			if cols[i].WidthRatio.IsUnknown() {
+				cols[i].WidthRatio = types.Float64Null()
+			}
+		}
+		list, d := columnsToList(ctx, cols)
+		diags.Append(d...)
+		plan.Columns = list
+	}
 	return diags
 }
 
@@ -168,7 +260,50 @@ func (r *BlockResource) readRawBlock(ctx context.Context, token string, b *rawBl
 		diags.Append(d...)
 		state.TabItems = list
 	}
+
+	if b.Type == "column_list" {
+		children, err := listBlockChildrenRaw(ctx, token, b.ID)
+		if err != nil {
+			diags.AddError("Error reading columns", err.Error())
+			return true, diags
+		}
+		prior, d := columnsFromList(ctx, state.Columns)
+		diags.Append(d...)
+		list, d := columnsToList(ctx, columnsFromChildren(children, prior))
+		diags.Append(d...)
+		state.Columns = list
+	}
 	return true, diags
+}
+
+// columnChildren keeps the live column blocks among a column list's
+// children, in Notion's order.
+func columnChildren(children []rawBlock) []rawBlock {
+	out := make([]rawBlock, 0, len(children))
+	for _, c := range children {
+		if c.Type == "column" && !c.InTrash && !c.Archived {
+			out = append(out, c)
+		}
+	}
+	return out
+}
+
+// columnsFromChildren turns a column list's children into columns. Only
+// the columns are read, not what's inside them, so the placeholder
+// paragraph each new column starts with never shows up as drift. A ratio
+// within float noise of the prior state keeps the prior value.
+func columnsFromChildren(children []rawBlock, prior []columnModel) []columnModel {
+	found := columnChildren(children)
+	cols := make([]columnModel, 0, len(found))
+	for i, c := range found {
+		ratio := widthRatioValue(c.Column)
+		if i < len(prior) && !ratio.IsNull() && !prior[i].WidthRatio.IsNull() && !prior[i].WidthRatio.IsUnknown() &&
+			sameRatio(prior[i].WidthRatio.ValueFloat64(), ratio.ValueFloat64()) {
+			ratio = prior[i].WidthRatio
+		}
+		cols = append(cols, columnModel{ID: types.StringValue(normalizeID(c.ID)), WidthRatio: ratio})
+	}
+	return cols
 }
 
 // tabItemsFromChildren turns a tab block's paragraph children into
@@ -264,8 +399,152 @@ func (r *BlockResource) updateRawBlock(ctx context.Context, prior, plan *BlockRe
 		diags.Append(d...)
 		plan.TabItems = list
 		plan.HasChildren = types.BoolValue(true)
+
+	case "column_list":
+		// columns is optional on an existing list (an import from an
+		// earlier version may not set it), and then it isn't managed.
+		if plan.Columns.IsNull() || plan.Columns.IsUnknown() {
+			plan.Columns = prior.Columns
+			return diags
+		}
+		priorCols, d := columnsFromList(ctx, prior.Columns)
+		diags.Append(d...)
+		planCols, d := columnsFromList(ctx, plan.Columns)
+		diags.Append(d...)
+		if diags.HasError() {
+			return diags
+		}
+		got, err := reconcileColumns(ctx, token, plan.ID.ValueString(), priorCols, planCols)
+		if err != nil {
+			diags.AddError("Error updating columns", err.Error())
+			return diags
+		}
+		for i := range planCols {
+			planCols[i].ID = got[i].ID
+			if planCols[i].WidthRatio.IsUnknown() {
+				planCols[i].WidthRatio = got[i].WidthRatio
+			}
+		}
+		fillUnknownRatios(ctx, token, plan.ID.ValueString(), planCols)
+		list, d := columnsToList(ctx, planCols)
+		diags.Append(d...)
+		plan.Columns = list
+		plan.HasChildren = types.BoolValue(true)
 	}
 	return diags
+}
+
+// columnOps is the set of API calls that turns prior columns into the
+// planned ones, matched by position like tab items. A configured
+// width_ratio that changed is updated in place, extra planned columns are
+// appended, and leftover prior columns are deleted with their content.
+type columnOps struct {
+	Update []int // indexes into plan whose width_ratio changed
+	Append []int // indexes into plan to create
+	Delete []int // indexes into prior to delete
+}
+
+func planColumnOps(prior, plan []columnModel) columnOps {
+	var ops columnOps
+	for i := range plan {
+		if i >= len(prior) {
+			ops.Append = append(ops.Append, i)
+			continue
+		}
+		want := plan[i].WidthRatio
+		if want.IsNull() || want.IsUnknown() {
+			continue
+		}
+		have := prior[i].WidthRatio
+		if have.IsNull() || have.IsUnknown() || !sameRatio(have.ValueFloat64(), want.ValueFloat64()) {
+			ops.Update = append(ops.Update, i)
+		}
+	}
+	for i := len(plan); i < len(prior); i++ {
+		ops.Delete = append(ops.Delete, i)
+	}
+	return ops
+}
+
+// reconcileColumns runs planColumnOps and returns every planned column with
+// its ID. width_ratio is what Notion returned for an updated or appended
+// column and unknown for the rest, and the caller only uses it where the
+// plan left the ratio unknown.
+func reconcileColumns(ctx context.Context, token, listID string, prior, plan []columnModel) ([]columnModel, error) {
+	ops := planColumnOps(prior, plan)
+	out := make([]columnModel, len(plan))
+	for i := range plan {
+		out[i] = columnModel{ID: types.StringNull(), WidthRatio: types.Float64Unknown()}
+		if i < len(prior) {
+			out[i].ID = prior[i].ID
+		}
+	}
+
+	for _, i := range ops.Update {
+		updated, err := updateBlockRaw(ctx, token, out[i].ID.ValueString(), map[string]interface{}{
+			"column": map[string]interface{}{"width_ratio": plan[i].WidthRatio.ValueFloat64()},
+		})
+		if err != nil {
+			return nil, err
+		}
+		out[i].WidthRatio = widthRatioValue(updated.Column)
+	}
+
+	if len(ops.Append) > 0 {
+		children := make([]map[string]interface{}, 0, len(ops.Append))
+		for _, i := range ops.Append {
+			children = append(children, columnBlock(plan[i].spec()))
+		}
+		// Appending has no idempotency key, so a resend could add the
+		// columns twice.
+		created, err := appendBlocksRaw(withNoReplay(ctx), token, listID, children, "")
+		if err != nil {
+			return nil, err
+		}
+		if len(created) != len(ops.Append) {
+			return nil, fmt.Errorf("appended %d columns but Notion returned %d", len(ops.Append), len(created))
+		}
+		for k, i := range ops.Append {
+			out[i].ID = types.StringValue(normalizeID(created[k].ID))
+			out[i].WidthRatio = widthRatioValue(created[k].Column)
+		}
+	}
+
+	for _, i := range ops.Delete {
+		if err := deleteBlockRaw(ctx, token, prior[i].ID.ValueString()); err != nil {
+			return nil, err
+		}
+	}
+	return out, nil
+}
+
+// fillUnknownRatios resolves width_ratio values the plan left unknown,
+// which happens for unconfigured ratios when something else changed. Notion
+// may rebalance widths when columns are added or removed, so it reads them
+// back. It's best effort. On a failed read it saves null and the next
+// refresh picks up the real value, which an unconfigured ratio accepts
+// without planning a change.
+func fillUnknownRatios(ctx context.Context, token, listID string, cols []columnModel) {
+	unknown := false
+	for _, c := range cols {
+		if c.WidthRatio.IsUnknown() {
+			unknown = true
+		}
+	}
+	if !unknown {
+		return
+	}
+	byID := map[string]*rawColumn{}
+	if children, err := listBlockChildrenRaw(ctx, token, listID); err == nil {
+		for _, f := range columnChildren(children) {
+			byID[normalizeID(f.ID)] = f.Column
+		}
+	}
+	for i := range cols {
+		if cols[i].WidthRatio.IsUnknown() {
+			cols[i].WidthRatio = widthRatioValue(byID[cols[i].ID.ValueString()])
+		}
+	}
 }
 
 // calloutIconRemoval returns the icon attribute the prior state had set
@@ -410,6 +689,9 @@ func readRawBlockIntoState(b *rawBlock, state *BlockResourceModel) {
 	if b.Type != "tab" && (state.TabItems.IsUnknown()) {
 		state.TabItems = types.ListNull(types.ObjectType{AttrTypes: tabItemAttrTypes})
 	}
+	if b.Type != "column_list" && state.Columns.IsUnknown() {
+		state.Columns = types.ListNull(columnObjectType)
+	}
 
 	switch b.Type {
 	case "heading_4":
@@ -426,7 +708,7 @@ func readRawBlockIntoState(b *rawBlock, state *BlockResourceModel) {
 		setRichTextState(b.Callout.RichText, state)
 		state.Color = types.StringValue(normalizeBlockColor(b.Callout.Color, priorColor))
 		state.setIconFields(reconcileCalloutIcon(priorIcons, b.Callout.icon()))
-	case "tab":
+	case "tab", "column_list":
 		state.RichText = types.StringValue("")
 	}
 }

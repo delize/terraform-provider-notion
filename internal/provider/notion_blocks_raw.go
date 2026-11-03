@@ -25,6 +25,10 @@ import (
 // A tab block is a container whose direct children are paragraph blocks.
 // Each paragraph is one tab item: its rich_text is the tab label, its icon
 // is the tab icon, and its own children are the tab's content.
+//
+// column_list blocks go this way too. Notion only creates a column list
+// together with its columns (at least two, each with at least one child),
+// and the SDK can't send nested children or a column width_ratio.
 
 const rawBlockAPIVersion = "2026-03-11"
 
@@ -43,6 +47,13 @@ type rawBlock struct {
 	Heading4  *rawTextBlock `json:"heading_4,omitempty"`
 	Paragraph *rawTextBlock `json:"paragraph,omitempty"`
 	Callout   *rawTextBlock `json:"callout,omitempty"`
+	Column    *rawColumn    `json:"column,omitempty"`
+}
+
+// rawColumn is the column object. width_ratio is absent when the column
+// uses an equal share of the list.
+type rawColumn struct {
+	WidthRatio *float64 `json:"width_ratio,omitempty"`
 }
 
 type rawTextBlock struct {
@@ -147,6 +158,52 @@ func tabBlock(items []tabItemSpec) map[string]interface{} {
 		"object": "block",
 		"type":   "tab",
 		"tab":    map[string]interface{}{"children": children},
+	}
+}
+
+// columnSpec is one column to create. A nil WidthRatio leaves the width to
+// Notion, which splits the list evenly.
+type columnSpec struct {
+	WidthRatio *float64
+}
+
+// columnPlaceholder is the child every new column gets. Notion rejects a
+// column with no children, so each column starts with one empty paragraph.
+func columnPlaceholder() map[string]interface{} {
+	return map[string]interface{}{
+		"object":    "block",
+		"type":      "paragraph",
+		"paragraph": map[string]interface{}{"rich_text": []interface{}{}},
+	}
+}
+
+// columnBlock builds one column with its placeholder child, for creating a
+// column list or appending a column to one.
+func columnBlock(c columnSpec) map[string]interface{} {
+	body := map[string]interface{}{
+		"children": []map[string]interface{}{columnPlaceholder()},
+	}
+	if c.WidthRatio != nil {
+		body["width_ratio"] = *c.WidthRatio
+	}
+	return map[string]interface{}{
+		"object": "block",
+		"type":   "column",
+		"column": body,
+	}
+}
+
+// columnListBlock builds a column list with its columns. Notion requires at
+// least two columns when the list is created.
+func columnListBlock(cols []columnSpec) map[string]interface{} {
+	children := make([]map[string]interface{}, 0, len(cols))
+	for _, c := range cols {
+		children = append(children, columnBlock(c))
+	}
+	return map[string]interface{}{
+		"object":      "block",
+		"type":        "column_list",
+		"column_list": map[string]interface{}{"children": children},
 	}
 }
 
