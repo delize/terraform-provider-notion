@@ -36,3 +36,5 @@ output "triage_credits_this_period" {
 - `total_credits_used`, `runs_completed` (Number) All-time totals.
 - `last_credit_usage_time` (Number) Epoch milliseconds, or null.
 - `periods` (List of Object) Newest first, each with `start_ms`, `end_ms`, and `credits_used`.
+
+Credits are fractional since 2026-10-30. `credits_used` has up to two decimal places. `total_credits_used` is rounded down to a whole number, or to two significant figures when it is below 1.

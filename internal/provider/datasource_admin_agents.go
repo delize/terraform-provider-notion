@@ -21,10 +21,16 @@ func int64Attr(desc string) schema.Int64Attribute {
 	return schema.Int64Attribute{Description: desc, Computed: true}
 }
 
+// Credits are fractional since 2026-10-30: credits_used has up to two
+// decimal places, and totals below 1 keep two significant figures.
+func creditsAttr(desc string) schema.Float64Attribute {
+	return schema.Float64Attribute{Description: desc, Computed: true}
+}
+
 type CreditPeriodModel struct {
-	StartMS     types.Int64 `tfsdk:"start_ms"`
-	EndMS       types.Int64 `tfsdk:"end_ms"`
-	CreditsUsed types.Int64 `tfsdk:"credits_used"`
+	StartMS     types.Int64   `tfsdk:"start_ms"`
+	EndMS       types.Int64   `tfsdk:"end_ms"`
+	CreditsUsed types.Float64 `tfsdk:"credits_used"`
 }
 
 var creditPeriodSchema = schema.ListNestedAttribute{
@@ -33,7 +39,7 @@ var creditPeriodSchema = schema.ListNestedAttribute{
 	NestedObject: schema.NestedAttributeObject{Attributes: map[string]schema.Attribute{
 		"start_ms":     int64Attr("Period start, epoch milliseconds, inclusive."),
 		"end_ms":       int64Attr("Period end, epoch milliseconds, exclusive."),
-		"credits_used": int64Attr("Premium AI credits used in the period."),
+		"credits_used": creditsAttr("Premium AI credits used in the period, up to two decimal places."),
 	}},
 }
 
@@ -41,7 +47,7 @@ func creditPeriods(in []adminCreditPeriod) []CreditPeriodModel {
 	out := make([]CreditPeriodModel, 0, len(in))
 	for _, p := range in {
 		out = append(out, CreditPeriodModel{
-			StartMS: types.Int64Value(int64(p.StartMS)), EndMS: types.Int64Value(int64(p.EndMS)), CreditsUsed: types.Int64Value(int64(p.CreditsUsed)),
+			StartMS: types.Int64Value(int64(p.StartMS)), EndMS: types.Int64Value(int64(p.EndMS)), CreditsUsed: types.Float64Value(p.CreditsUsed),
 		})
 	}
 	return out
@@ -196,7 +202,7 @@ type AdminAgentCreditUsageModel struct {
 	Type                types.String        `tfsdk:"type"`
 	Status              types.String        `tfsdk:"status"`
 	CreditLimit         types.Int64         `tfsdk:"credit_limit"`
-	TotalCreditsUsed    types.Int64         `tfsdk:"total_credits_used"`
+	TotalCreditsUsed    types.Float64       `tfsdk:"total_credits_used"`
 	RunsCompleted       types.Int64         `tfsdk:"runs_completed"`
 	LastCreditUsageTime types.Int64         `tfsdk:"last_credit_usage_time"`
 	Periods             []CreditPeriodModel `tfsdk:"periods"`
@@ -221,7 +227,7 @@ func (d *AdminAgentCreditUsageDataSource) Schema(_ context.Context, _ datasource
 			"type":                   computedString("custom or database_autofill."),
 			"status":                 computedString("The agent's status."),
 			"credit_limit":           int64Attr("The enforced per-agent credit limit, or null."),
-			"total_credits_used":     int64Attr("All-time credits used."),
+			"total_credits_used":     creditsAttr("All-time credits used. Notion rounds it down to a whole number, or to two significant figures below 1."),
 			"runs_completed":         int64Attr("All-time finished runs."),
 			"last_credit_usage_time": int64Attr("Last credit use, epoch milliseconds, or null."),
 			"periods":                creditPeriodSchema,
@@ -247,7 +253,7 @@ func (d *AdminAgentCreditUsageDataSource) Read(ctx context.Context, req datasour
 	}
 	state.Name, state.Type, state.Status = types.StringValue(u.Name), types.StringValue(u.Type), types.StringValue(u.Status)
 	state.CreditLimit = int64FromPtr(u.CreditLimit)
-	state.TotalCreditsUsed = types.Int64Value(int64(u.TotalCreditsUsed))
+	state.TotalCreditsUsed = types.Float64Value(u.TotalCreditsUsed)
 	state.RunsCompleted = types.Int64Value(int64(u.RunsCompleted))
 	state.LastCreditUsageTime = int64FromPtr(u.LastCreditUsageTime)
 	state.Periods = creditPeriods(u.Periods)
@@ -270,7 +276,7 @@ type AgentCreditUsageEntry struct {
 	Type                types.String        `tfsdk:"type"`
 	Status              types.String        `tfsdk:"status"`
 	CreditLimit         types.Int64         `tfsdk:"credit_limit"`
-	TotalCreditsUsed    types.Int64         `tfsdk:"total_credits_used"`
+	TotalCreditsUsed    types.Float64       `tfsdk:"total_credits_used"`
 	RunsCompleted       types.Int64         `tfsdk:"runs_completed"`
 	LastCreditUsageTime types.Int64         `tfsdk:"last_credit_usage_time"`
 	Periods             []CreditPeriodModel `tfsdk:"periods"`
@@ -300,7 +306,7 @@ func (d *AdminAgentsCreditUsageDataSource) Schema(_ context.Context, _ datasourc
 					"type":                   computedString("custom or database_autofill."),
 					"status":                 computedString("The agent's status."),
 					"credit_limit":           int64Attr("The enforced per-agent credit limit, or null."),
-					"total_credits_used":     int64Attr("All-time credits used."),
+					"total_credits_used":     creditsAttr("All-time credits used. Notion rounds it down to a whole number, or to two significant figures below 1."),
 					"runs_completed":         int64Attr("All-time finished runs."),
 					"last_credit_usage_time": int64Attr("Last credit use, epoch milliseconds, or null."),
 					"periods":                creditPeriodSchema,
@@ -330,7 +336,7 @@ func (d *AdminAgentsCreditUsageDataSource) Read(ctx context.Context, req datasou
 	for _, u := range usage {
 		state.Agents = append(state.Agents, AgentCreditUsageEntry{
 			ID: types.StringValue(u.ID), Name: types.StringValue(u.Name), Type: types.StringValue(u.Type), Status: types.StringValue(u.Status),
-			CreditLimit: int64FromPtr(u.CreditLimit), TotalCreditsUsed: types.Int64Value(int64(u.TotalCreditsUsed)),
+			CreditLimit: int64FromPtr(u.CreditLimit), TotalCreditsUsed: types.Float64Value(u.TotalCreditsUsed),
 			RunsCompleted: types.Int64Value(int64(u.RunsCompleted)), LastCreditUsageTime: int64FromPtr(u.LastCreditUsageTime),
 			Periods: creditPeriods(u.Periods),
 		})

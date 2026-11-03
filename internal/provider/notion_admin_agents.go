@@ -12,8 +12,8 @@ import (
 // Custom agent governance endpoints of the Admin API, all workspace-scoped
 // under /v1/spaces/{space_id}. Scopes: workflows:read and workflows:write.
 //
-// Times are epoch milliseconds and credits are whole numbers, per the
-// reference. Agent lists and permission lists page with `cursor`. The agent
+// Times are epoch milliseconds. Credits are fractional since 2026-10-30, so
+// they decode as float64. Agent lists and permission lists page with `cursor`. The agent
 // list documents array filters without saying how to encode them, so the
 // provider repeats the key (status=a&status=b), the default OpenAPI form
 // encoding. The MCP and PAT endpoints, which do say, use brackets instead.

@@ -33,4 +33,4 @@ output "top_spenders" {
 
 ### Read-Only
 
-- `agents` (List of Object) Each with `id`, `name`, `type`, `status`, `credit_limit`, `total_credits_used`, `runs_completed`, `last_credit_usage_time`, and `periods`.
+- `agents` (List of Object) Each with `id`, `name`, `type`, `status`, `credit_limit`, `total_credits_used`, `runs_completed`, `last_credit_usage_time`, and `periods`. Credit values are fractional, as described on `notion_admin_agent_credit_usage`.

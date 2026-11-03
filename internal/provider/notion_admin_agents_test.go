@@ -167,7 +167,7 @@ func (f *fakeAdminAPI) serveAgents(w http.ResponseWriter, r *http.Request, parts
 		case len(parts) == 6 && parts[5] == "credit_usage":
 			// Two pages of periods, paged with start_cursor.
 			if r.URL.Query().Get("start_cursor") == "" {
-				u := a.usage([]interface{}{map[string]interface{}{"credits_used": 40.0, "metrics_period_start_ms": 3.0, "metrics_period_end_ms": 4.0}})
+				u := a.usage([]interface{}{map[string]interface{}{"credits_used": 40.25, "metrics_period_start_ms": 3.0, "metrics_period_end_ms": 4.0}})
 				u["has_more"], u["next_cursor"] = true, "p2"
 				f.writeJSON(w, u)
 			} else {
@@ -478,6 +478,8 @@ resource "terraform_data" "cleanup" {
 				resource.TestCheckResourceAttr("data.notion_admin_agents.all", "agents.0.permissions.0.role", "comment_only"),
 				resource.TestCheckResourceAttr("data.notion_admin_agents.active", "agents.#", "1"),
 				resource.TestCheckResourceAttr("data.notion_admin_agent_credit_usage.triage", "periods.#", "2"),
+				// Credits are fractional since 2026-10-30.
+				resource.TestCheckResourceAttr("data.notion_admin_agent_credit_usage.triage", "periods.0.credits_used", "40.25"),
 				resource.TestCheckResourceAttr("data.notion_admin_agent_credit_usage.triage", "periods.1.credits_used", "300"),
 				resource.TestCheckResourceAttr("data.notion_admin_agent_credit_usage.triage", "total_credits_used", "340"),
 				resource.TestCheckResourceAttr("data.notion_admin_agents_credit_usage.all", "agents.#", "2"),
