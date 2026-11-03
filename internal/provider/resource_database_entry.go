@@ -186,13 +186,21 @@ func (r *DatabaseEntryResource) Create(ctx context.Context, req resource.CreateR
 }
 
 func (r *DatabaseEntryResource) createWithMarkdown(ctx context.Context, plan *DatabaseEntryResourceModel, titlePropName string, resp *resource.CreateResponse) {
-	// Build properties as raw JSON-compatible map for the markdown client
-	props := make(map[string]interface{})
-	props[titlePropName] = map[string]interface{}{
-		"type": "title",
-		"title": []map[string]interface{}{
-			{"type": "text", "text": map[string]string{"content": plan.Title.ValueString()}},
-		},
+	// Send the same properties as the plain create path. POST /v1/pages
+	// takes `properties` next to `markdown`, which is exclusive only with
+	// `children`. This path used to send just the title, so typed property
+	// maps were dropped until the next update.
+	entryProps := buildEntryProperties(ctx, plan, &resp.Diagnostics)
+	if resp.Diagnostics.HasError() {
+		return
+	}
+	entryProps[titlePropName] = notionapi.TitleProperty{
+		Type:  notionapi.PropertyTypeTitle,
+		Title: plainToRichText(plan.Title.ValueString()),
+	}
+	props := make(map[string]interface{}, len(entryProps))
+	for name, p := range entryProps {
+		props[name] = p
 	}
 
 	created, err := r.mdClient.CreateDatabaseEntryWithMarkdown(

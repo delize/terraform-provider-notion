@@ -126,7 +126,7 @@ A replace overwrites everything on the entry's page with the configured markdown
 
 ### Optional
 
-- `markdown` (String) Body content of the entry's page as markdown in the syntax set by `markdown_version`. Full-rewrite semantics (`replace_content`), sent only when the markdown or its version changes. Not read back from Notion, since Notion normalizes markdown.
+- `markdown` (String) Body content of the entry's page as markdown in the syntax set by `markdown_version`. Full-rewrite semantics (`replace_content`), sent only when the markdown or its version changes. Not read back from Notion, since Notion normalizes markdown. The typed property maps are sent in the same create request as the markdown. Earlier provider versions sent only the title there, so properties stayed unset until the next update.
 - `markdown_version` (String) Markdown syntax for `markdown`: `v2` (Notion-flavored Markdown) or `v1` (enhanced markdown, deprecated). Overrides the provider's `markdown_version`. When neither is set, the field is left out and Notion uses `v1`. Records the provider default when only that is set. Changing the effective version replaces the body once. See [Markdown versions](#markdown-versions).
 - `rich_text_properties` (Map of String) Map of rich text property name to string value. Values support markdown links: `[text](url)`.
 - `number_properties` (Map of Number) Map of number property name to numeric value.

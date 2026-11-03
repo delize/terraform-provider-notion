@@ -33,6 +33,7 @@ type fakeMarkdownPages struct {
 	titles   map[string]string
 	trashed  map[string]bool
 	calls    []mdCall
+	creates  []map[string]interface{} // POST /v1/pages bodies
 	warnings []markdownWarning
 }
 
@@ -113,6 +114,7 @@ func (f *fakeMarkdownPages) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		f.next++
 		id := fmt.Sprintf("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaa%02d", f.next)
 		f.titles[id], _ = titleFromBody(body)
+		f.creates = append(f.creates, body)
 		reply(200, f.page(id))
 	case f.titles[id] == "" && !f.trashed[id]:
 		reply(404, map[string]string{"object": "error", "code": "object_not_found", "message": r.Method + " " + r.URL.Path})
