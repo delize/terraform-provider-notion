@@ -11,31 +11,45 @@ Manages a Notion database view via the 2026-03-19 `/v1/views` endpoints. View
 types include `table`, `board`, `list`, `calendar`, `timeline`, `gallery`,
 `form`, `chart`, `map`, and `dashboard`.
 
-`filter`, `sorts`, `quick_filters`, and `configuration` accept raw JSON
-strings — these mirror the same shape as the data source query API and would
-balloon if modeled as nested attributes. Use `jsonencode` to build them.
+`filter`, `sorts`, `quick_filters`, and `configuration` accept JSON strings in the shapes the [Working with views](https://developers.notion.com/guides/data-apis/working-with-views) guide describes. Filter and sorts use the same shape as a data source query. Use `jsonencode` to build them.
 
 ## Example Usage
 
 ```terraform
-resource "notion_view" "by_status" {
+resource "notion_view" "open_work" {
   database_id    = notion_database.tasks.id
   data_source_id = notion_database.tasks.data_source_ids[0]
-  name           = "By Status"
-  type           = "board"
+  name           = "Open work"
+  type           = "table"
+
+  filter = jsonencode({
+    property = "Priority"
+    select   = { equals = "High" }
+  })
 
   sorts = jsonencode([
-    { property = "Status", direction = "ascending" }
+    { timestamp = "created_time", direction = "descending" }
   ])
 
+  # Quick filter keys are property IDs. The title property's ID is "title".
+  quick_filters = jsonencode({ title = {} })
+
   configuration = jsonencode({
-    type = "board"
-    board = {
-      group_by = "Status"
-    }
+    type       = "table"
+    properties = [{ property_id = "title", visible = true, width = 320 }]
+    wrap_cells = true
   })
 }
 ```
+
+## How the JSON attributes read back
+
+Notion returns these values with its own key order and whitespace, and sometimes with more than you sent. The provider keeps the string you configured as long as Notion's value decodes to the same JSON, so formatting never shows as a diff. When the value really differs, for example because someone changed the filter in the Notion app, state holds Notion's value as compact JSON with sorted keys (the same form `jsonencode` produces) and the next plan shows the change. An import stores the same normalized form.
+
+- `configuration` updates are a shallow merge in Notion, so top-level fields you leave out keep whatever value the view had. The provider ignores those extra top-level fields when it compares. Removing a field such as `wrap_cells` from the config doesn't reset it in Notion, so set it explicitly instead. Fields inside a configured value, such as the entries of `properties`, must match exactly.
+- Removing a key from `quick_filters` removes that quick filter from the view. Notion keeps quick filters an update doesn't name, so the provider sends `null` for keys the previous state had and the config dropped. It skips that when the config also adds a key the state doesn't have, in case the two name the same property by name and by ID.
+- Notion resolves property names to property IDs in `quick_filters` keys and in `property_id` fields inside `configuration`. Use property IDs there, or the value Notion returns won't match the config and the apply fails with an inconsistent result. The title property's ID is always `title`.
+- To clear the filter, sorts, or all quick filters, set the attribute to `jsonencode(null)`, which the views guide documents for updates. Removing the attribute from the config leaves Notion's value in place, because an attribute that isn't configured follows whatever Notion has.
 
 ## Schema
 

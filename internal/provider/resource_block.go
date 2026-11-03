@@ -124,7 +124,7 @@ func (r *BlockResource) Schema(_ context.Context, _ resource.SchemaRequest, resp
 				Default:     stringdefault.StaticString(""),
 			},
 			"rich_text_json": schema.StringAttribute{
-				Description: "JSON-encoded array of Notion rich text objects. When set, takes precedence over rich_text.",
+				Description: "JSON-encoded array of Notion rich text objects. When set, takes precedence over rich_text, which then keeps its configured value. Read back by comparing the fields a request sets, so Notion's added plain_text, href, and default annotations don't show as a diff.",
 				Optional:    true,
 			},
 			"color": schema.StringAttribute{
