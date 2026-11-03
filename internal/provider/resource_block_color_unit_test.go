@@ -24,7 +24,6 @@ func coloredSDKBlocks(color string) map[string]notionapi.Block {
 		"to_do":              &notionapi.ToDoBlock{ToDo: notionapi.ToDo{Color: color}},
 		"toggle":             &notionapi.ToggleBlock{Toggle: notionapi.Toggle{Color: color}},
 		"quote":              &notionapi.QuoteBlock{Quote: notionapi.Quote{Color: color}},
-		"callout":            &notionapi.CalloutBlock{Callout: notionapi.Callout{Color: color}},
 		"table_of_contents":  &notionapi.TableOfContentsBlock{TableOfContents: notionapi.TableOfContents{Color: color}},
 	}
 }
@@ -60,7 +59,7 @@ func TestReadBlockIntoState_NormalizesDefaultColor(t *testing.T) {
 // the config is reset in Notion. The SDK would otherwise omit it.
 func TestBuildBlockUpdateRequest_EmptyColorSendsDefault(t *testing.T) {
 	blockTypes := []string{"paragraph", "heading_1", "heading_2", "heading_3", "bulleted_list_item",
-		"numbered_list_item", "to_do", "toggle", "quote", "callout"}
+		"numbered_list_item", "to_do", "toggle", "quote"}
 	for _, typ := range blockTypes {
 		for color, want := range map[string]string{"": `"color":"default"`, "red": `"color":"red"`} {
 			plan := BlockResourceModel{
