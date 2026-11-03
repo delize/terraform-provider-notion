@@ -3,6 +3,7 @@ package provider
 import (
 	"context"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -393,3 +394,47 @@ func TestRetryTransport_RetriesOnNetworkError(t *testing.T) {
 type roundTripperFunc func(*http.Request) (*http.Response, error)
 
 func (f roundTripperFunc) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }
+
+// An HTML error page reaches the caller as a JSON Notion error with the
+// real status, not as HTML the SDK can't decode.
+func TestRetryTransport_HTMLErrorBecomesJSON(t *testing.T) {
+	cases := []struct {
+		name       string
+		status     int
+		ct         string
+		body       string
+		wantStatus int
+		wantEdge   bool
+	}{
+		{"HTML 502 after retries", 502, "text/html", "<html>502</html>", 502, true},
+		{"HTML 403 is not retried but explained", 403, "text/html; charset=utf-8", "<html>blocked</html>", 403, true},
+		{"HTML 200 after retries becomes 502", 200, "text/html", "<html>maintenance</html>", 502, true},
+		{"JSON 400 passes through", 400, "application/json", `{"object":"error","code":"validation_error"}`, 400, false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Type", tc.ct)
+				w.WriteHeader(tc.status)
+				_, _ = w.Write([]byte(tc.body))
+			}))
+			t.Cleanup(srv.Close)
+			resp, err := (&http.Client{Transport: newTestTransport()}).Get(srv.URL)
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			defer resp.Body.Close()
+			b, _ := io.ReadAll(resp.Body)
+			if resp.StatusCode != tc.wantStatus {
+				t.Errorf("status = %d, want %d", resp.StatusCode, tc.wantStatus)
+			}
+			isEdge := strings.Contains(string(b), `"code":"notion_edge_error"`)
+			if isEdge != tc.wantEdge {
+				t.Errorf("edge error body = %v, want %v: %s", isEdge, tc.wantEdge, b)
+			}
+			if tc.wantEdge && (!strings.Contains(string(b), fmt.Sprintf("HTTP %d", tc.status)) || resp.Header.Get("Content-Type") != "application/json") {
+				t.Errorf("body or content type wrong: %q %s", resp.Header.Get("Content-Type"), b)
+			}
+		})
+	}
+}
