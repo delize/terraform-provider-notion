@@ -80,3 +80,47 @@ resource "notion_comment" "test_md" {
 }
 `, parentPageID, markdown)
 }
+
+// TestAccCommentResource_Reply replies inside the discussion of another
+// comment, then edits the reply. Replies have no parent_page_id, so this
+// covers refreshing a comment by ID and taking its anchor from the parent.
+func TestAccCommentResource_Reply(t *testing.T) {
+	if os.Getenv("NOTION_TOKEN") == "" {
+		t.Skip("NOTION_TOKEN not set")
+	}
+	client := notionTestClient(t)
+	parentPageID := makeIsolatedParentPage(t, client, "comment-reply")
+
+	resource.Test(t, resource.TestCase{
+		ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
+		Steps: []resource.TestStep{
+			{
+				Config: testAccCommentReplyConfig(parentPageID, "First reply"),
+				Check: resource.ComposeAggregateTestCheckFunc(
+					resource.TestCheckResourceAttrPair("notion_comment.reply", "discussion_id", "notion_comment.thread", "discussion_id"),
+					resource.TestCheckResourceAttr("notion_comment.reply", "plain_text", "First reply"),
+					resource.TestCheckResourceAttr("notion_comment.reply", "anchor_block_id", normalizeID(parentPageID)),
+					resource.TestCheckResourceAttr("notion_comment.reply", "property_id", ""),
+				),
+			},
+			{
+				Config: testAccCommentReplyConfig(parentPageID, "First reply (edited)"),
+				Check:  resource.TestCheckResourceAttr("notion_comment.reply", "plain_text", "First reply (edited)"),
+			},
+		},
+	})
+}
+
+func testAccCommentReplyConfig(parentPageID, reply string) string {
+	return fmt.Sprintf(`
+resource "notion_comment" "thread" {
+  parent_page_id = %q
+  rich_text      = "Thread start"
+}
+
+resource "notion_comment" "reply" {
+  discussion_id = notion_comment.thread.discussion_id
+  rich_text     = %q
+}
+`, parentPageID, reply)
+}
