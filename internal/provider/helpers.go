@@ -94,12 +94,3 @@ func jsonToRichText(jsonStr string) ([]notionapi.RichText, error) {
 	}
 	return rt, nil
 }
-
-// richTextToJSON serializes a slice of RichText objects to a JSON string.
-func richTextToJSON(rt []notionapi.RichText) (string, error) {
-	b, err := json.Marshal(rt)
-	if err != nil {
-		return "", fmt.Errorf("error serializing rich text to JSON: %w", err)
-	}
-	return string(b), nil
-}
