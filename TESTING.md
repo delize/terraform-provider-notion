@@ -112,6 +112,12 @@ in Notion if cleanup fails. Terraform's test framework calls Destroy at the
 end of each `TestCase`, which trashes pages via the `in_trash` field — they
 end up in the workspace trash, not hard-deleted.
 
+## Showcase
+
+The acceptance tests destroy everything they build, so the test pages in Notion are empty. `examples/showcase` is a Terraform config that builds one page using every non-Enterprise feature and leaves it in place. The `Showcase` workflow (`.github/workflows/showcase.yml`) applies it with the real `terraform` CLI against a provider built from the branch through `dev_overrides`, then runs `terraform plan -detailed-exitcode` and fails if the plan isn't empty. It runs on manual dispatch, release tags, and same-repo PRs that touch the showcase, and it shares the `notion-acceptance-workspace` concurrency group.
+
+Each run first calls `scripts/showcase_cleanup.py`, which trashes the parent page's child pages titled `Provider showcase...` and nothing else. No state is kept between runs, so the newest showcase replaces the previous one. It uses `NOTION_TOKEN`, `NOTION_TEST_PARENT_PAGE_ID`, and optionally `NOTION_TEST_TEMPLATE_ID`. See `examples/showcase/README.md` for what it covers, what it leaves out, and how to run it locally.
+
 ## CI and branch protection
 
 `main` is protected by the ruleset in `.github/rulesets/main.json`. Changes land through a pull request and are squash-merged. Force-pushes and branch deletion are blocked. The required checks are `build` and `acceptance-result`. The repository admin role can bypass the rules only when merging a pull request, never for a direct push. Edit the JSON and run `python3 .github/rulesets/apply.py` to change it, since the script updates the ruleset by name.
