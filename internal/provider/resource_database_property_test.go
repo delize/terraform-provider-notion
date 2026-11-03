@@ -32,6 +32,41 @@ func TestAccDatabasePropertyRichTextResource(t *testing.T) {
 	})
 }
 
+func TestAccDatabasePropertyPhoneNumberResource(t *testing.T) {
+	parentPageID := os.Getenv("NOTION_TEST_PARENT_PAGE_ID")
+	if parentPageID == "" {
+		t.Skip("NOTION_TEST_PARENT_PAGE_ID not set")
+	}
+	// Work inside a throwaway child page so anything a failed run leaves
+	// behind is trashed with it.
+	parentPageID = makeIsolatedParentPage(t, notionTestClient(t), "databasepropertyphone")
+
+	resource.Test(t, resource.TestCase{
+		ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
+		Steps: []resource.TestStep{
+			{
+				Config: testAccDatabasePropertyBasicConfig(parentPageID, "phone_number", "Phone"),
+				Check: resource.ComposeAggregateTestCheckFunc(
+					resource.TestCheckResourceAttrSet("notion_database_property_phone_number.test", "id"),
+					resource.TestCheckResourceAttr("notion_database_property_phone_number.test", "name", "Phone"),
+				),
+			},
+			{
+				ResourceName:      "notion_database_property_phone_number.test",
+				ImportState:       true,
+				ImportStateVerify: true,
+				ImportStateIdFunc: func(s *terraform.State) (string, error) {
+					rs, ok := s.RootModule().Resources["notion_database_property_phone_number.test"]
+					if !ok {
+						return "", fmt.Errorf("phone number property not in state")
+					}
+					return rs.Primary.Attributes["database"] + "/" + rs.Primary.Attributes["name"], nil
+				},
+			},
+		},
+	})
+}
+
 func TestAccDatabasePropertySelectResource(t *testing.T) {
 	parentPageID := os.Getenv("NOTION_TEST_PARENT_PAGE_ID")
 	if parentPageID == "" {

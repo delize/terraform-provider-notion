@@ -143,6 +143,7 @@ provider "notion" {
 - `notion_database_property_checkbox` - Checkbox property
 - `notion_database_property_url` - URL property
 - `notion_database_property_email` - Email property
+- `notion_database_property_phone_number` - Phone number property
 - `notion_database_property_created_time` - Created time property (automatic)
 - `notion_database_property_created_by` - Created by property (automatic)
 - `notion_database_property_last_edited_time` - Last edited time property (automatic)
