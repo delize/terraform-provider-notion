@@ -28,6 +28,9 @@ func newMarkdownClient(client *notionapi.Client) *markdownClient {
 	return &markdownClient{token: client.Token.String()}
 }
 
+// Creates and inserts add content each time they run and have no
+// idempotency key, so those methods pass withNoReplay. A replace is safe
+// to resend and keeps the normal retries.
 func (mc *markdownClient) doRequest(ctx context.Context, method, url string, body interface{}) ([]byte, error) {
 	var reqBody []byte
 	if body != nil {
@@ -66,7 +69,7 @@ func (mc *markdownClient) CreatePageWithMarkdown(ctx context.Context, parentPage
 		"markdown": markdown,
 	}
 
-	respBody, err := mc.doRequest(ctx, http.MethodPost, "https://api.notion.com/v1/pages", body)
+	respBody, err := mc.doRequest(withNoReplay(ctx), http.MethodPost, "https://api.notion.com/v1/pages", body)
 	if err != nil {
 		return nil, err
 	}
@@ -107,7 +110,7 @@ func (mc *markdownClient) CreatePageWithMarkdownAndTitle(ctx context.Context, pa
 		body["position"] = position
 	}
 
-	respBody, err := mc.doRequest(ctx, http.MethodPost, "https://api.notion.com/v1/pages", body)
+	respBody, err := mc.doRequest(withNoReplay(ctx), http.MethodPost, "https://api.notion.com/v1/pages", body)
 	if err != nil {
 		return "", "", err
 	}
@@ -131,7 +134,7 @@ func (mc *markdownClient) CreateDatabaseEntryWithMarkdown(ctx context.Context, d
 		"properties": properties,
 	}
 
-	respBody, err := mc.doRequest(ctx, http.MethodPost, "https://api.notion.com/v1/pages", body)
+	respBody, err := mc.doRequest(withNoReplay(ctx), http.MethodPost, "https://api.notion.com/v1/pages", body)
 	if err != nil {
 		return "", "", err
 	}
@@ -223,7 +226,7 @@ func (mc *markdownClient) InsertPageMarkdown(ctx context.Context, pageID, markdo
 	url := fmt.Sprintf("https://api.notion.com/v1/pages/%s/markdown", pageID)
 	body := insertContentBody(markdown, position)
 
-	respBody, err := mc.doRequest(ctx, http.MethodPatch, url, body)
+	respBody, err := mc.doRequest(withNoReplay(ctx), http.MethodPatch, url, body)
 	if err != nil {
 		return nil, err
 	}

@@ -59,7 +59,9 @@ func createPageWithTemplate(ctx context.Context, token, parentPageID, title, tem
 		return "", "", err
 	}
 
-	resp, err := doNotionRequest(ctx, http.MethodPost, notionAPIBaseURL+"/pages", token, bodyJSON)
+	// A create has no idempotency key, so don't resend it once Notion
+	// answered.
+	resp, err := doNotionRequest(withNoReplay(ctx), http.MethodPost, notionAPIBaseURL+"/pages", token, bodyJSON)
 	if err != nil {
 		return "", "", err
 	}
@@ -136,7 +138,9 @@ func createPagePlain(ctx context.Context, token, parentPageID, title string, ico
 		return "", "", err
 	}
 
-	resp, err := doNotionRequest(ctx, http.MethodPost, notionAPIBaseURL+"/pages", token, bodyJSON)
+	// A create has no idempotency key, so don't resend it once Notion
+	// answered.
+	resp, err := doNotionRequest(withNoReplay(ctx), http.MethodPost, notionAPIBaseURL+"/pages", token, bodyJSON)
 	if err != nil {
 		return "", "", err
 	}
