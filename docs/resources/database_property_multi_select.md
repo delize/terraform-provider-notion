@@ -9,6 +9,8 @@ description: |-
 
 Manages a multi-select property on a Notion database. Multi-select properties allow choosing multiple options from a predefined list.
 
+Entries set values with `multi_select_properties` on `notion_database_entry`. Notion adds any option name an entry writes that isn't in the list yet. List every option an entry uses in `options` here, or this resource will show the added option as drift on its next plan.
+
 ## Example Usage
 
 ```terraform

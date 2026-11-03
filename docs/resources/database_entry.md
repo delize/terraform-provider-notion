@@ -82,6 +82,37 @@ resource "notion_database_entry" "office" {
 }
 ```
 
+### With Multi-Select, Relation, and People Values
+
+```terraform
+resource "notion_database_entry" "launch" {
+  database = notion_database.projects.id
+  title    = "Launch"
+
+  multi_select_properties = {
+    "Tags" = ["Infra", "Q3"]
+  }
+
+  relation_properties = {
+    "Offices" = [notion_database_entry.office.id]
+  }
+
+  people_properties = {
+    "Owner" = [data.notion_user.lead.id]
+  }
+}
+```
+
+## List values
+
+`multi_select_properties`, `relation_properties`, and `people_properties` map a property name to a list. Each list replaces the whole value in Notion, so values added in the Notion UI are removed on the next apply that writes that property. An empty list clears the value, and so does removing the key. Notion accepts at most 100 items per property in one request, and the provider rejects longer lists at plan time.
+
+Order doesn't matter. When Notion holds the same items as the config, the config's order is kept in state. Relation and people IDs may be written with or without hyphens. When Notion's value matches the config, the config's form is kept, and an ID Notion added on its own is stored without hyphens.
+
+Writing a multi-select option name that the property doesn't have yet makes Notion add it to the property's options, as long as the integration can edit the database. If the property is managed by `notion_database_property_multi_select`, list the option there too, or that resource will show the new option as drift on its next plan. Option names can't contain commas.
+
+A page response carries at most 25 relation or people references. When a managed relation or people value has 25 or more, the provider reads the full list from Notion's [page property item endpoint](https://developers.notion.com/reference/retrieve-a-page-property) during refresh, so long lists don't show a diff. Related pages the integration can't access may be left out of the value Notion returns, which shows up as a diff.
+
 ### With Markdown Content
 
 ```terraform
@@ -137,6 +168,9 @@ A replace overwrites everything on the entry's page with the configured markdown
 - `email_properties` (Map of String) Map of email property name to email value.
 - `phone_number_properties` (Map of String) Map of phone number property name to phone number value.
 - `date_properties` (Map of String) Map of date property name to ISO 8601 date string (e.g. `2024-01-15` or `2024-01-15T10:30:00Z`).
+- `multi_select_properties` (Map of List of String) Map of multi-select property name to the list of selected option names. A name that isn't an option yet is added to the property by Notion. At most 100 names per property. See [List values](#list-values).
+- `relation_properties` (Map of List of String) Map of relation property name to the list of related page IDs, with or without hyphens. At most 100 IDs per property. See [List values](#list-values).
+- `people_properties` (Map of List of String) Map of people property name to the list of user IDs, with or without hyphens. Bot user IDs are accepted, though Notion notes that its own internal bots may not be assignable. At most 100 IDs per property. See [List values](#list-values).
 
 ### Read-Only
 
@@ -152,3 +186,5 @@ Database entries can be imported using their Notion page ID:
 ```shell
 terraform import notion_database_entry.first_task <entry-id>
 ```
+
+Import reads the title, but no typed property maps, because the provider can't tell which properties the config manages. The first apply after an import writes every map from config.

@@ -7,7 +7,7 @@ description: |-
 
 # notion_database_property_relation (Resource)
 
-Manages a relation property on a Notion database. Relation properties create links between entries in different databases.
+Manages a relation property on a Notion database. Relation properties create links between entries in different databases. Entries set the related pages with `relation_properties` on `notion_database_entry`.
 
 ## Example Usage
 
