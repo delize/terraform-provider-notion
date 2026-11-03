@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"os"
 	"regexp"
-	"strings"
 	"testing"
 
 	"github.com/hashicorp/terraform-plugin-testing/helper/resource"
@@ -420,8 +419,9 @@ resource "notion_database_entry" "owned" {
 // TestAccDatabaseEntryResource_ClearScalarValues sets a number, select,
 // status, URL, email, and phone number, then removes every key from the
 // config. The update sends null for each, and the check reads the page back
-// from Notion to confirm the values are gone. Notion resets a status to the
-// property's default option rather than leaving it empty.
+// from Notion to confirm the values are gone. A status can't be emptied.
+// Notion resets it to the property's default option when one is set, and
+// otherwise keeps it, so the check compares against default_option.
 func TestAccDatabaseEntryResource_ClearScalarValues(t *testing.T) {
 	parentPageID := os.Getenv("NOTION_TEST_PARENT_PAGE_ID")
 	if parentPageID == "" {
@@ -453,7 +453,7 @@ func TestAccDatabaseEntryResource_ClearScalarValues(t *testing.T) {
 				Check: resource.ComposeAggregateTestCheckFunc(
 					resource.TestCheckNoResourceAttr(addr, "number_properties.%"),
 					resource.TestCheckNoResourceAttr(addr, "status_properties.%"),
-					testAccCheckEntryScalarsCleared(t, addr),
+					testAccCheckEntryScalarsCleared(t, addr, "notion_database_property_status.stage"),
 				),
 			},
 		},
@@ -462,12 +462,17 @@ func TestAccDatabaseEntryResource_ClearScalarValues(t *testing.T) {
 
 // testAccCheckEntryScalarsCleared reads the page over direct HTTP, since the
 // SDK decodes a null number as 0 and can't tell the two apart.
-func testAccCheckEntryScalarsCleared(t *testing.T, addr string) resource.TestCheckFunc {
+func testAccCheckEntryScalarsCleared(t *testing.T, addr, statusAddr string) resource.TestCheckFunc {
 	return func(s *terraform.State) error {
 		rs, ok := s.RootModule().Resources[addr]
 		if !ok {
 			return fmt.Errorf("%s not in state", addr)
 		}
+		sp, ok := s.RootModule().Resources[statusAddr]
+		if !ok {
+			return fmt.Errorf("%s not in state", statusAddr)
+		}
+		defaultOption := sp.Primary.Attributes["default_option"]
 		body, err := doNotionGet(context.Background(), notionAPIBaseURL+"/pages/"+rs.Primary.ID, os.Getenv("NOTION_TOKEN"), notionTrashAPIVersion)
 		if err != nil {
 			return err
@@ -483,11 +488,18 @@ func testAccCheckEntryScalarsCleared(t *testing.T, addr string) resource.TestChe
 				return fmt.Errorf("%s.%s is %s in Notion, want null", name, field, v)
 			}
 		}
-		stage := string(page.Properties["Stage"]["status"])
-		if strings.Contains(stage, `"Done"`) {
-			return fmt.Errorf("Stage is still Done in Notion: %s", stage)
+		var stage struct {
+			Name string `json:"name"`
 		}
-		t.Logf("number, select, URL, email, and phone are null in Notion, and Stage is now %s", stage)
+		_ = json.Unmarshal(page.Properties["Stage"]["status"], &stage)
+		want := defaultOption
+		if want == "" {
+			want = "Done"
+		}
+		if stage.Name != want {
+			return fmt.Errorf("Stage is %q in Notion, want %q (default_option %q)", stage.Name, want, defaultOption)
+		}
+		t.Logf("number, select, URL, email, and phone are null in Notion. Stage is %q, default_option is %q", stage.Name, defaultOption)
 		return nil
 	}
 }

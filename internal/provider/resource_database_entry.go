@@ -114,7 +114,7 @@ func (r *DatabaseEntryResource) Schema(_ context.Context, _ resource.SchemaReque
 				ElementType: types.StringType,
 			},
 			"status_properties": schema.MapAttribute{
-				Description: "Map of status property name to status name. Removing a key resets the status to the property's default option.",
+				Description: "Map of status property name to status name. Removing a key resets the status to the property's default option when one is set. Otherwise Notion keeps the current status, since its API can't empty one.",
 				Optional:    true,
 				ElementType: types.StringType,
 			},
@@ -690,9 +690,10 @@ func removedKeys(stateMap, planMap types.Map) []string {
 
 // clearedProperty sends a property value as null, which is how Notion clears
 // a number, select, URL, email, or phone number. For a status, null resets it
-// to the property's default option. The SDK structs can't send null for
-// these, and Notion rejects the "" or empty option they send instead, or
-// keeps 0 as a value.
+// to the property's default option when one is set, and otherwise Notion
+// keeps the current status. The SDK structs can't send null for these, and
+// Notion rejects the "" or empty option they send instead, or keeps 0 as a
+// value.
 type clearedProperty struct {
 	Type notionapi.PropertyType
 }

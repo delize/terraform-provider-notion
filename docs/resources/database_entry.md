@@ -163,7 +163,7 @@ A replace overwrites everything on the entry's page with the configured markdown
 - `number_properties` (Map of Number) Map of number property name to numeric value. Removing a key from this or any other property map clears that value in Notion.
 - `checkbox_properties` (Map of Boolean) Map of checkbox property name to boolean value.
 - `select_properties` (Map of String) Map of select property name to option name.
-- `status_properties` (Map of String) Map of status property name to status name. Removing a key resets the status to the property's default option, which is how Notion clears a status.
+- `status_properties` (Map of String) Map of status property name to status name. Removing a key resets the status to the property's default option when one is set (see `default_option` on `notion_database_property_status`). Otherwise Notion keeps the current status, since its API has no way to empty one, and the provider stops managing it.
 - `url_properties` (Map of String) Map of URL property name to URL value.
 - `email_properties` (Map of String) Map of email property name to email value.
 - `phone_number_properties` (Map of String) Map of phone number property name to phone number value.
