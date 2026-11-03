@@ -46,3 +46,16 @@ func TestQueryViewPaths(t *testing.T) {
 		t.Fatalf("requests = %v, want %v", seen, want)
 	}
 }
+
+// Import has only the view ID, so database_id must come from the parent.
+func TestViewToStateFillsDatabaseIDFromParent(t *testing.T) {
+	var v viewObject
+	if err := json.Unmarshal([]byte(`{"id":"v-1","data_source_id":"ds-1","parent":{"type":"database_id","database_id":"db-1"}}`), &v); err != nil {
+		t.Fatal(err)
+	}
+	var state ViewResourceModel
+	(&ViewResource{}).viewToState(&v, &state)
+	if state.DatabaseID.ValueString() != "db1" || state.DataSourceID.ValueString() != "ds1" {
+		t.Fatalf("database_id=%q data_source_id=%q", state.DatabaseID.ValueString(), state.DataSourceID.ValueString())
+	}
+}

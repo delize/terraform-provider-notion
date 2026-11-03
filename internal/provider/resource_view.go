@@ -280,6 +280,11 @@ func (r *ViewResource) viewToState(v *viewObject, state *ViewResourceModel) {
 	state.Name = types.StringValue(v.Name)
 	state.Type = types.StringValue(v.Type)
 	state.URL = types.StringValue(v.URL)
+	// Import starts with only the view ID, so database_id comes from the
+	// view's parent. Same hyphen handling as data_source_id below.
+	if db := v.Parent.DatabaseID; db != "" && normalizeID(db) != normalizeID(state.DatabaseID.ValueString()) {
+		state.DatabaseID = types.StringValue(normalizeID(db))
+	}
 	// Notion returns the ID with hyphens. Keep the form already in state
 	// when it's the same ID, so a hyphenless config doesn't read as changed.
 	if v.DataSourceID != "" && normalizeID(v.DataSourceID) != normalizeID(state.DataSourceID.ValueString()) {
