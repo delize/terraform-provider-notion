@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 )
 
 // Notion shipped 8 view endpoints in the 2026-03-19 changelog under /v1/views.
@@ -106,11 +107,37 @@ func deleteView(ctx context.Context, token, viewID string) error {
 	return nil
 }
 
-// queryView issues POST /v1/views/{id}/query. body is the raw JSON request
-// (start_cursor, page_size, etc.); response is returned verbatim so callers
-// can surface it as raw JSON.
-func queryView(ctx context.Context, token, viewID string, body []byte) ([]byte, error) {
-	resp, err := doNotionRequest(ctx, http.MethodPost, viewsBaseURL()+"/"+viewID+"/query", token, body)
+// queryView runs a view query. Without queryID it creates one with
+// POST /v1/views/{id}/queries, which returns the first page and a query ID.
+// With queryID it fetches a later page of that cached query with GET
+// /v1/views/{id}/queries/{query_id}. Notion keeps a query for about 15
+// minutes. The response is returned verbatim.
+func queryView(ctx context.Context, token, viewID, queryID, startCursor string, pageSize int64) ([]byte, error) {
+	method, u, body := http.MethodPost, viewsBaseURL()+"/"+viewID+"/queries", []byte(nil)
+	if queryID == "" {
+		req := map[string]interface{}{}
+		if pageSize > 0 {
+			req["page_size"] = pageSize
+		}
+		b, err := json.Marshal(req)
+		if err != nil {
+			return nil, err
+		}
+		body = b
+	} else {
+		q := url.Values{}
+		if startCursor != "" {
+			q.Set("start_cursor", startCursor)
+		}
+		if pageSize > 0 {
+			q.Set("page_size", fmt.Sprint(pageSize))
+		}
+		method, u = http.MethodGet, viewsBaseURL()+"/"+viewID+"/queries/"+queryID
+		if len(q) > 0 {
+			u += "?" + q.Encode()
+		}
+	}
+	resp, err := doNotionRequest(ctx, method, u, token, body)
 	if err != nil {
 		return nil, err
 	}
