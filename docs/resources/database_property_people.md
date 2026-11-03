@@ -7,7 +7,7 @@ description: |-
 
 # notion_database_property_people (Resource)
 
-Manages a people property on a Notion database. People properties allow assigning Notion users to entries.
+Manages a people property on a Notion database. People properties allow assigning Notion users to entries. As of the 2026-06-10 Notion API change, bot users that appear as user objects (including most public-connection integrations) can also be assigned to `people` values and referenced in `user` rich-text mentions.
 
 ## Example Usage
 

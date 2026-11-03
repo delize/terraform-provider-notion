@@ -223,6 +223,20 @@ func buildBlockForCreate(plan BlockResourceModel) (notionapi.Block, error) {
 			Column:     notionapi.Column{},
 		}, nil
 
+	case "heading_4", "tabs", "tab":
+		// These block types exist in the Notion API (heading_4 as of
+		// 2026-03-30, tabs/tab as of 2026-03-25) but the upstream
+		// jomei/notionapi SDK pinned in go.mod doesn't model them yet.
+		// They're listed in validBlockTypes so configs pass plan-time
+		// validation, but creation requires SDK updates or a custom
+		// raw-JSON path. Surface a clear error rather than the generic
+		// "unsupported block type" so users know what's missing.
+		return nil, fmt.Errorf(
+			"block type %q exists in the Notion API but the upstream notionapi SDK does not yet model it; "+
+				"this provider can't build it until the SDK adds support. Track jomei/notionapi releases or open an issue against this provider to request a raw-JSON path.",
+			blockType,
+		)
+
 	default:
 		return nil, fmt.Errorf("unsupported block type: %s", blockType)
 	}

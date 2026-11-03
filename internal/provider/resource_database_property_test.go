@@ -123,3 +123,61 @@ resource "notion_database_property_number" "test" {
 }
 `, parentPageID, format)
 }
+
+// TestAccDatabasePropertyStatusResource exercises the 2026-03-19 writable
+// status property. Two steps verify create + option update; Notion groups
+// (To-do / In progress / Complete) are assigned server-side so we don't
+// assert on them.
+func TestAccDatabasePropertyStatusResource(t *testing.T) {
+	parentPageID := os.Getenv("NOTION_TEST_PARENT_PAGE_ID")
+	if parentPageID == "" {
+		t.Skip("NOTION_TEST_PARENT_PAGE_ID not set")
+	}
+
+	resource.Test(t, resource.TestCase{
+		ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
+		Steps: []resource.TestStep{
+			{
+				Config: testAccDatabasePropertyStatusConfig(parentPageID, `{
+    "Not started" = "default"
+    "In progress" = "blue"
+    "Done"        = "green"
+  }`),
+				Check: resource.ComposeAggregateTestCheckFunc(
+					resource.TestCheckResourceAttrSet("notion_database_property_status.test", "id"),
+					resource.TestCheckResourceAttr("notion_database_property_status.test", "name", "Workflow"),
+					resource.TestCheckResourceAttr("notion_database_property_status.test", "options.Not started", "default"),
+					resource.TestCheckResourceAttr("notion_database_property_status.test", "options.In progress", "blue"),
+					resource.TestCheckResourceAttr("notion_database_property_status.test", "options.Done", "green"),
+				),
+			},
+			{
+				Config: testAccDatabasePropertyStatusConfig(parentPageID, `{
+    "Not started" = "default"
+    "In progress" = "blue"
+    "Blocked"     = "red"
+    "Done"        = "green"
+  }`),
+				Check: resource.ComposeAggregateTestCheckFunc(
+					resource.TestCheckResourceAttr("notion_database_property_status.test", "options.Blocked", "red"),
+				),
+			},
+		},
+	})
+}
+
+func testAccDatabasePropertyStatusConfig(parentPageID, optionsBody string) string {
+	return fmt.Sprintf(`
+resource "notion_database" "status_test" {
+  parent             = %q
+  title              = "Status Test DB"
+  title_column_title = "Name"
+}
+
+resource "notion_database_property_status" "test" {
+  database = notion_database.status_test.id
+  name     = "Workflow"
+  options = %s
+}
+`, parentPageID, optionsBody)
+}

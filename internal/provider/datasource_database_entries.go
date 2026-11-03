@@ -141,6 +141,21 @@ func (d *DatabaseEntriesDataSource) Read(ctx context.Context, req datasource.Rea
 			entries = append(entries, entry)
 		}
 
+		if result.RequestStatus != nil && result.RequestStatus.Type == "incomplete" {
+			reason := result.RequestStatus.IncompleteReason
+			if reason == "" {
+				reason = "(no incomplete_reason returned)"
+			}
+			resp.Diagnostics.AddWarning(
+				"Database query results truncated",
+				fmt.Sprintf("Notion returned request_status.type=\"incomplete\" (reason: %s). "+
+					"As of the 2026-04-20 API change the Query a data source endpoint caps pagination "+
+					"at 10,000 rows per query. The returned entries are a partial result. "+
+					"Narrow your filter or process the data source in smaller chunks.", reason),
+			)
+			break
+		}
+
 		if !result.HasMore {
 			break
 		}
@@ -157,10 +172,21 @@ func (d *DatabaseEntriesDataSource) Read(ctx context.Context, req datasource.Rea
 
 // Raw JSON types for manual parsing (bypasses SDK's strict type checking)
 
+// rawQueryResponse mirrors the subset of the Query a data source response we
+// consume. NextCursor is treated as an opaque string — per the 2026-04-22
+// Notion API change cursors are no longer guaranteed to be UUIDs and must
+// round-trip verbatim. RequestStatus surfaces the 2026-04-20 10K pagination
+// depth cap (type="incomplete", incomplete_reason="query_result_limit_reached").
 type rawQueryResponse struct {
-	Results    []rawPage `json:"results"`
-	HasMore    bool      `json:"has_more"`
-	NextCursor string    `json:"next_cursor"`
+	Results       []rawPage          `json:"results"`
+	HasMore       bool               `json:"has_more"`
+	NextCursor    string             `json:"next_cursor"`
+	RequestStatus *rawRequestStatus  `json:"request_status,omitempty"`
+}
+
+type rawRequestStatus struct {
+	Type             string `json:"type"`
+	IncompleteReason string `json:"incomplete_reason,omitempty"`
 }
 
 type rawPage struct {
