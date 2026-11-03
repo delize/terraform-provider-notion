@@ -27,7 +27,11 @@ resource "notion_database" "tasks" {
 
 The icon attributes work like the ones on `notion_page`. The difference is `icon`, which reports the database's current emoji when it isn't configured and leaves it alone, so existing configs keep working. Set at most one of `icon`, `icon_name` (with optional `icon_color`), `icon_url`, or `icon_custom_emoji_id`.
 
-Icon and `is_locked` are written and read on the database itself over Notion API version 2026-03-11. Schema changes stay on the 2022-06-28 path, so a refresh makes two requests per database.
+Icon, `is_locked`, and `show_data_source_title` are written and read on the database itself over Notion API version 2026-03-11. Schema changes stay on the 2022-06-28 path, so a refresh makes two requests per database.
+
+## Data source title
+
+`show_data_source_title` is the **Show data source title** setting in the Notion app, which shows or hides the title above the database's views. Notion turns it on for new databases. A full-page database with one data source never shows the title, whatever the setting says, but the setting is still stored and read back, so setting it there doesn't cause a diff. When the attribute is unset, the provider reports the current value and leaves it alone.
 
 ## Schema
 
@@ -45,6 +49,7 @@ Icon and `is_locked` are written and read on the database itself over Notion API
 - `icon_url` (String) External image URL for the icon. Notion icon-set URLs are rejected.
 - `icon_custom_emoji_id` (String) ID of a custom emoji in the integration's workspace.
 - `is_locked` (Boolean) Whether the database is locked from editing in the Notion app. It does not block API updates. When unset, the current value is reported and left alone.
+- `show_data_source_title` (Boolean) Whether the data source title is shown above the database's views (API 2026-10-20). Notion defaults it to `true` on create. Full-page databases with one data source never show the title. When unset, the current value is reported and left alone.
 
 ### Read-Only
 

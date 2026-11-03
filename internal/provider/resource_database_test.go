@@ -44,6 +44,65 @@ func TestAccDatabaseResource(t *testing.T) {
 	})
 }
 
+// TestAccDatabaseShowDataSourceTitle walks a full-page database with one
+// data source through show_data_source_title. Notion never shows the title
+// on such a database, so this is where an API that echoed the effective
+// value instead of the stored one would plan a diff forever. Every step's
+// post-apply plan must be empty. Removing the attribute leaves the value
+// alone.
+func TestAccDatabaseShowDataSourceTitle(t *testing.T) {
+	if os.Getenv("NOTION_TOKEN") == "" {
+		t.Skip("NOTION_TOKEN not set")
+	}
+	parentPageID := makeIsolatedParentPage(t, notionTestClient(t), "db-show-ds-title")
+
+	const addr = "notion_database.show"
+	resource.Test(t, resource.TestCase{
+		ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
+		CheckDestroy:             testAccCheckResourcesTrashed(t),
+		Steps: []resource.TestStep{
+			{
+				Config: testAccDatabaseShowDSTitleConfig(parentPageID, ""),
+				Check: resource.ComposeAggregateTestCheckFunc(
+					resource.TestCheckResourceAttr(addr, "is_inline", "false"),
+					resource.TestCheckResourceAttr(addr, "show_data_source_title", "true"),
+				),
+			},
+			{
+				Config: testAccDatabaseShowDSTitleConfig(parentPageID, "false"),
+				Check:  resource.TestCheckResourceAttr(addr, "show_data_source_title", "false"),
+			},
+			{
+				Config: testAccDatabaseShowDSTitleConfig(parentPageID, "true"),
+				Check:  resource.TestCheckResourceAttr(addr, "show_data_source_title", "true"),
+			},
+			{
+				Config: testAccDatabaseShowDSTitleConfig(parentPageID, ""),
+				Check:  resource.TestCheckResourceAttr(addr, "show_data_source_title", "true"),
+			},
+			{
+				ResourceName:      addr,
+				ImportState:       true,
+				ImportStateVerify: true,
+			},
+		},
+	})
+}
+
+func testAccDatabaseShowDSTitleConfig(parentPageID, show string) string {
+	line := ""
+	if show != "" {
+		line = "  show_data_source_title = " + show + "\n"
+	}
+	return fmt.Sprintf(`
+resource "notion_database" "show" {
+  parent             = %q
+  title              = "Show data source title"
+  title_column_title = "Name"
+%s}
+`, parentPageID, line)
+}
+
 func testAccDatabaseResourceConfig(parentPageID, title, titleColumnTitle string) string {
 	return fmt.Sprintf(`
 resource "notion_database" "test" {

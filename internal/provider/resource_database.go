@@ -41,6 +41,7 @@ type DatabaseResourceModel struct {
 	IconURL          types.String `tfsdk:"icon_url"`
 	IconCustomEmoji  types.String `tfsdk:"icon_custom_emoji_id"`
 	IsLocked         types.Bool   `tfsdk:"is_locked"`
+	ShowDSTitle      types.Bool   `tfsdk:"show_data_source_title"`
 }
 
 func (m *DatabaseResourceModel) iconFields() iconFields {
@@ -169,6 +170,16 @@ func (r *DatabaseResource) Schema(_ context.Context, _ resource.SchemaRequest, r
 					boolplanmodifier.UseStateForUnknown(),
 				},
 			},
+			"show_data_source_title": schema.BoolAttribute{
+				Description: "Whether the data source title is shown above the database's views (the Show data source title setting). " +
+					"Notion defaults it to true on create. Full-page databases with one data source never show the title, whatever this says. " +
+					"When unset, the current value is reported and left alone.",
+				Optional: true,
+				Computed: true,
+				PlanModifiers: []planmodifier.Bool{
+					boolplanmodifier.UseStateForUnknown(),
+				},
+			},
 		},
 	}
 }
@@ -182,23 +193,37 @@ func (r *DatabaseResource) ValidateConfig(ctx context.Context, req resource.Vali
 	validateIconFields(cfg.iconFields(), &resp.Diagnostics)
 }
 
-// applyExtras writes icon and is_locked on the database container over
-// Notion-Version 2026-03-11, where Update a database takes both without
-// touching the schema. The SDK's 2022-06-28 request can't send native icons,
-// custom emoji, or is_locked. clearIcon removes an icon that the config no
-// longer manages.
+// applyExtras writes icon, is_locked, and show_data_source_title on the
+// database container over Notion-Version 2026-03-11, where Update a database
+// takes them without touching the schema. The SDK's 2022-06-28 request can't
+// send native icons, custom emoji, or the newer flags. clearIcon removes an
+// icon that the config no longer manages. Each flag is sent only when
+// configured, so an unset one is left as it is in Notion.
 func (r *DatabaseResource) applyExtras(ctx context.Context, id string, cfg *DatabaseResourceModel, clearIcon bool) (containerExtras, error) {
 	token, err := tokenForClient(r.client)
 	if err != nil {
 		return containerExtras{}, err
 	}
-	return patchContainerExtras(ctx, token, "databases", id, cfg.iconFields().request(), clearIcon, cfg.IsLocked)
+	return patchContainerExtras(ctx, token, "databases", id, cfg.iconFields().request(), clearIcon, cfg.IsLocked, cfg.extraFields())
 }
 
-// finishIcon fills the computed emoji `icon` and is_locked after a write.
-// A known planned emoji is kept as planned, since Terraform rejects a
-// result that differs from a known plan value. Read refreshes it.
-func finishIcon(plan *DatabaseResourceModel, extras containerExtras) {
+// extraFields returns the database-only fields for the extras PATCH.
+func (m *DatabaseResourceModel) extraFields() map[string]interface{} {
+	if m.ShowDSTitle.IsNull() || m.ShowDSTitle.IsUnknown() {
+		return nil
+	}
+	return map[string]interface{}{"show_data_source_title": m.ShowDSTitle.ValueBool()}
+}
+
+// finishExtras fills the computed emoji `icon`, is_locked, and
+// show_data_source_title after a write. A known planned emoji is kept as
+// planned, since Terraform rejects a result that differs from a known plan
+// value. Read refreshes it.
+//
+// show_data_source_title is taken from the response. The docs describe it as
+// the stored setting, which full-page databases with one data source ignore,
+// so a configured value is expected to come back as sent.
+func finishExtras(plan *DatabaseResourceModel, extras containerExtras) {
 	if plan.Icon.IsUnknown() {
 		if extras.Icon.Type == "emoji" {
 			plan.Icon = types.StringValue(extras.Icon.Emoji)
@@ -207,6 +232,20 @@ func finishIcon(plan *DatabaseResourceModel, extras containerExtras) {
 		}
 	}
 	plan.IsLocked = types.BoolValue(extras.IsLocked)
+	switch {
+	case extras.ShowDataSourceTitle != nil:
+		plan.ShowDSTitle = types.BoolValue(*extras.ShowDataSourceTitle)
+	case plan.ShowDSTitle.IsUnknown():
+		plan.ShowDSTitle = types.BoolNull()
+	}
+}
+
+// showDSTitleValue maps the response field to state, null when absent.
+func showDSTitleValue(extras containerExtras) types.Bool {
+	if extras.ShowDataSourceTitle == nil {
+		return types.BoolNull()
+	}
+	return types.BoolValue(*extras.ShowDataSourceTitle)
 }
 
 func (r *DatabaseResource) Configure(_ context.Context, req resource.ConfigureRequest, resp *resource.ConfigureResponse) {
@@ -274,10 +313,13 @@ func (r *DatabaseResource) Create(ctx context.Context, req resource.CreateReques
 		if plan.IsLocked.IsUnknown() {
 			plan.IsLocked = types.BoolValue(false)
 		}
+		if plan.ShowDSTitle.IsUnknown() {
+			plan.ShowDSTitle = types.BoolNull()
+		}
 		resp.Diagnostics.Append(resp.State.Set(ctx, &plan)...)
 		return
 	}
-	finishIcon(&plan, extras)
+	finishExtras(&plan, extras)
 
 	resp.Diagnostics.Append(resp.State.Set(ctx, &plan)...)
 }
@@ -307,8 +349,9 @@ func (r *DatabaseResource) Read(ctx context.Context, req resource.ReadRequest, r
 	state.Description = types.StringValue(richTextToPlain(db.Description))
 
 	// The schema read above stays on the SDK (2022-06-28, where properties
-	// live on the database). Icon and is_locked come from a second GET on
-	// 2026-03-11, which reports native icons and custom emoji.
+	// live on the database). Icon, is_locked, and show_data_source_title
+	// come from a second GET on 2026-03-11, which reports native icons and
+	// custom emoji.
 	token, err := tokenForClient(r.client)
 	if err != nil {
 		resp.Diagnostics.AddError("Error reading database", err.Error())
@@ -328,6 +371,7 @@ func (r *DatabaseResource) Read(ctx context.Context, req resource.ReadRequest, r
 	state.Icon = reconciled.Emoji
 	state.setManagedIcon(reconciled)
 	state.IsLocked = types.BoolValue(extras.IsLocked)
+	state.ShowDSTitle = showDSTitleValue(extras)
 
 	if db.Parent.Type == notionapi.ParentTypePageID {
 		state.Parent = types.StringValue(normalizeID(string(db.Parent.PageID)))
@@ -389,16 +433,17 @@ func (r *DatabaseResource) Update(ctx context.Context, req resource.UpdateReques
 		}
 	}
 
-	// Use the config, not the plan: Computed icon and is_locked carry the
-	// prior state when unset, and resending those would undo UI changes.
-	// Clear the icon only when a managed non-emoji icon was removed.
+	// Use the config, not the plan. Computed icon, is_locked, and
+	// show_data_source_title carry the prior state when unset, and resending
+	// those would undo UI changes. Clear the icon only when a managed
+	// non-emoji icon was removed.
 	clear := config.iconFields().request() == nil && state.iconFields().managed()
 	extras, err := r.applyExtras(ctx, plan.ID.ValueString(), &config, clear)
 	if err != nil {
 		resp.Diagnostics.AddError("Error setting database icon or lock", err.Error())
 		return
 	}
-	finishIcon(&plan, extras)
+	finishExtras(&plan, extras)
 
 	resp.Diagnostics.Append(resp.State.Set(ctx, &plan)...)
 }
