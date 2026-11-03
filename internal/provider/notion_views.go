@@ -17,10 +17,10 @@ import (
 
 // viewObject is the slim subset of the response we need on read.
 type viewObject struct {
-	Object         string          `json:"object"`
-	ID             string          `json:"id"`
-	DataSourceID   string          `json:"data_source_id"`
-	Parent         struct {
+	Object       string `json:"object"`
+	ID           string `json:"id"`
+	DataSourceID string `json:"data_source_id"`
+	Parent       struct {
 		Type       string `json:"type"`
 		DatabaseID string `json:"database_id"`
 	} `json:"parent"`
