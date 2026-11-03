@@ -97,7 +97,7 @@ func (r *AgentSettingsResource) Schema(_ context.Context, _ resource.SchemaReque
 				Optional:    true,
 				Computed:    true,
 				PlanModifiers: []planmodifier.String{
-					stringplanmodifier.UseStateForUnknown(),
+					stringplanmodifier.UseNonNullStateForUnknown(),
 				},
 			},
 			"description": schema.StringAttribute{
@@ -106,7 +106,7 @@ func (r *AgentSettingsResource) Schema(_ context.Context, _ resource.SchemaReque
 				Optional: true,
 				Computed: true,
 				PlanModifiers: []planmodifier.String{
-					stringplanmodifier.UseStateForUnknown(),
+					stringplanmodifier.UseNonNullStateForUnknown(),
 				},
 			},
 			"model_mode": schema.StringAttribute{
@@ -115,7 +115,7 @@ func (r *AgentSettingsResource) Schema(_ context.Context, _ resource.SchemaReque
 				Optional: true,
 				Computed: true,
 				PlanModifiers: []planmodifier.String{
-					stringplanmodifier.UseStateForUnknown(),
+					stringplanmodifier.UseNonNullStateForUnknown(),
 				},
 			},
 			"model_id": schema.StringAttribute{
@@ -210,13 +210,16 @@ func validateAgentModelConfig(cfg AgentSettingsModel, diags *diag.Diagnostics) {
 }
 
 // modelIDPlanModifier plans model_id when it isn't configured. Auto has no
-// model ID, so the plan is null. When model_mode keeps its prior value the
-// prior ID stays, which leaves an unmanaged model alone. Otherwise the ID is
-// known after apply.
+// model ID, so the plan is null. When model_mode is unset or keeps its prior
+// value the prior ID stays, which leaves an unmanaged model alone and keeps
+// an early-access ID that Notion reports as null. Otherwise the ID is known
+// after apply. It reads model_mode from config and state, not from the plan,
+// because the plan still holds model_mode as unknown while sibling plan
+// modifiers run.
 type modelIDPlanModifier struct{}
 
 func (modelIDPlanModifier) Description(context.Context) string {
-	return "Null for auto, the prior value while model_mode is unchanged, unknown otherwise."
+	return "Null for auto, the prior value while model_mode is unset or unchanged, unknown otherwise."
 }
 
 func (m modelIDPlanModifier) MarkdownDescription(ctx context.Context) string {
@@ -228,7 +231,7 @@ func (modelIDPlanModifier) PlanModifyString(ctx context.Context, req planmodifie
 		return
 	}
 	var mode types.String
-	resp.Diagnostics.Append(req.Plan.GetAttribute(ctx, path.Root("model_mode"), &mode)...)
+	resp.Diagnostics.Append(req.Config.GetAttribute(ctx, path.Root("model_mode"), &mode)...)
 	if resp.Diagnostics.HasError() || mode.IsUnknown() {
 		return
 	}
@@ -241,7 +244,12 @@ func (modelIDPlanModifier) PlanModifyString(ctx context.Context, req planmodifie
 	}
 	var priorMode types.String
 	resp.Diagnostics.Append(req.State.GetAttribute(ctx, path.Root("model_mode"), &priorMode)...)
-	if mode.Equal(priorMode) {
+	if resp.Diagnostics.HasError() || priorMode.IsNull() {
+		// Never read from Notion, for example state from before model_mode
+		// existed. Leave it to the apply.
+		return
+	}
+	if mode.IsNull() || mode.Equal(priorMode) {
 		resp.PlanValue = req.StateValue
 	}
 }

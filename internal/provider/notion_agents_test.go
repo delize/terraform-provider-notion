@@ -431,12 +431,19 @@ func TestUnitAgentSettings_Lifecycle(t *testing.T) {
   name = "Triage bot"
 `),
 				ConfigPlanChecks: resource.ConfigPlanChecks{
-					PreApply: []plancheck.PlanCheck{plancheck.ExpectResourceAction(addr, plancheck.ResourceActionUpdate)},
+					PreApply: []plancheck.PlanCheck{
+						plancheck.ExpectResourceAction(addr, plancheck.ResourceActionUpdate),
+						// The unmanaged early-access ID stays known in the
+						// plan instead of turning into "known after apply".
+						plancheck.ExpectKnownValue(addr, tfjsonpath.New("model_id"), knownvalue.StringExact("notion-early-1")),
+						plancheck.ExpectKnownValue(addr, tfjsonpath.New("model_mode"), knownvalue.StringExact("pinned")),
+					},
 				},
 				Check: resource.ComposeAggregateTestCheckFunc(
 					f.expectPatches(`{"name":"Triage bot"}`),
 					resource.TestCheckResourceAttr(addr, "name", "Triage bot"),
 					resource.TestCheckResourceAttr(addr, "description", "Edited in Notion"),
+					resource.TestCheckResourceAttr(addr, "model_id", "notion-early-1"),
 				),
 			},
 			{
