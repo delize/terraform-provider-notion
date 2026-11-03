@@ -170,7 +170,7 @@ func (r *PageResource) Schema(_ context.Context, _ resource.SchemaRequest, resp 
 			"markdown_insert": schema.SingleNestedAttribute{
 				Description: "Append or prepend markdown to the page without rewriting the existing content. " +
 					"Each change to `content` or `position` triggers another insert via the Notion insert_content endpoint; " +
-					"this is an imperative trigger, not declarative state. Removing the block does not remove the previously inserted content.",
+					"this is an imperative trigger, not declarative state. Removing the block does not remove the previously inserted content. Other updates, such as a title change, do not insert again.",
 				Optional: true,
 				Attributes: map[string]schema.Attribute{
 					"content": schema.StringAttribute{
@@ -587,14 +587,31 @@ func (r *PageResource) Update(ctx context.Context, req resource.UpdateRequest, r
 		// Keep plan value in state rather than API response to avoid normalization diffs
 	}
 
-	if diags := r.applyMarkdownInsert(ctx, &plan); diags != nil {
-		resp.Diagnostics.Append(diags...)
-		if resp.Diagnostics.HasError() {
-			return
+	// An insert adds content every time it runs and can't be undone, so it
+	// runs only when markdown_insert was added or its content or position
+	// changed. An unrelated change such as the title must not insert again.
+	if markdownInsertChanged(plan.MarkdownInsert, state.MarkdownInsert) {
+		if diags := r.applyMarkdownInsert(ctx, &plan); diags != nil {
+			resp.Diagnostics.Append(diags...)
+			if resp.Diagnostics.HasError() {
+				return
+			}
 		}
 	}
 
 	resp.Diagnostics.Append(resp.State.Set(ctx, &plan)...)
+}
+
+// markdownInsertChanged reports whether markdown_insert in the plan differs
+// from state. Removing the block is not a change that inserts anything.
+func markdownInsertChanged(plan, state *MarkdownInsertModel) bool {
+	if plan == nil {
+		return false
+	}
+	if state == nil {
+		return true
+	}
+	return !plan.Content.Equal(state.Content) || !plan.Position.Equal(state.Position)
 }
 
 // applyMarkdownInsert performs an insert_content PATCH if a markdown_insert

@@ -210,3 +210,62 @@ func TestUnitDatabaseEntry_MarkdownResentOnlyOnChange(t *testing.T) {
 		}
 	}
 }
+
+func patchCount(t *testing.T, f *fakeMarkdownPages, typ string, want int) tfresource.TestCheckFunc {
+	return func(_ *terraform.State) error {
+		got := 0
+		for _, c := range f.markdownCalls() {
+			if c.Method == http.MethodPatch && c.Type == typ {
+				got++
+			}
+		}
+		f.reset()
+		if got != want {
+			return fmt.Errorf("step made %d %s calls, want %d", got, typ, want)
+		}
+		return nil
+	}
+}
+
+func pageInsertConfig(title, markdown, content, position string) string {
+	insert := ""
+	if content != "" {
+		insert = fmt.Sprintf(`
+  markdown_insert = {
+    content  = %q
+    position = %q
+  }
+`, content, position)
+	}
+	return fmt.Sprintf(`
+provider "notion" {
+  token = "secret_unit_md_insert"
+}
+
+resource "notion_page" "p" {
+  parent_page_id = "11111111111111111111111111111111"
+  title          = %q
+  markdown       = %q
+%s}
+`, title, markdown, insert)
+}
+
+// An insert adds content each time it runs and can't be undone, so it must
+// run only when markdown_insert is added or its content or position changes.
+func TestUnitPage_MarkdownInsertOnlyOnChange(t *testing.T) {
+	f := newFakeMarkdownPages(t)
+	inserts := func(n int) tfresource.TestCheckFunc { return patchCount(t, f, "insert_content", n) }
+	tfresource.UnitTest(t, tfresource.TestCase{
+		ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
+		Steps: []tfresource.TestStep{
+			{Config: pageInsertConfig("One", "# Body", "A", "end"), Check: inserts(1)},
+			{Config: pageInsertConfig("Two", "# Body", "A", "end"), Check: inserts(0)},
+			{Config: pageInsertConfig("Two", "# Body changed", "A", "end"), Check: inserts(0)},
+			{Config: pageInsertConfig("Two", "# Body changed", "B", "end"), Check: inserts(1)},
+			{Config: pageInsertConfig("Two", "# Body changed", "B", "start"), Check: inserts(1)},
+			{Config: pageInsertConfig("Two", "# Body changed", "", ""), Check: inserts(0)},
+			{Config: pageInsertConfig("Three", "# Body changed", "", ""), Check: inserts(0)},
+			{Config: pageInsertConfig("Three", "# Body changed", "B", "start"), Check: inserts(1)},
+		},
+	})
+}

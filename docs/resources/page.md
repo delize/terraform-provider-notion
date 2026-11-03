@@ -113,7 +113,7 @@ A replace overwrites everything on the page with the configured markdown, includ
   rewriting the existing content (uses the 2026-05-15 `insert_content.position`
   endpoint). Each change to `content` or `position` triggers another insert —
   this is an imperative trigger, not declarative state. Removing the block does
-  not remove the previously inserted content. Fields:
+  not remove the previously inserted content. Other updates, such as a title change, don't insert again (earlier provider versions re-inserted on every update). Fields:
   - `content` (String, required) Markdown to insert.
   - `position` (String, required) `"start"` (prepend) or `"end"` (append).
 
