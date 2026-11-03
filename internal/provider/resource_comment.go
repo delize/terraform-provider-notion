@@ -86,12 +86,11 @@ func (r *CommentResource) Schema(_ context.Context, _ resource.SchemaRequest, re
 				Optional: true,
 			},
 			"plain_text": schema.StringAttribute{
+				// No UseStateForUnknown: an update changes this, so the plan
+				// has to leave it unknown or Terraform rejects the new value.
 				Description: "Server-rendered plain-text representation of the comment body. " +
 					"Computed after create/update.",
 				Computed: true,
-				PlanModifiers: []planmodifier.String{
-					stringplanmodifier.UseStateForUnknown(),
-				},
 			},
 			"anchor_block_id": schema.StringAttribute{
 				Description: "The block ID (page or block) that this comment's discussion is anchored to. " +
@@ -109,11 +108,9 @@ func (r *CommentResource) Schema(_ context.Context, _ resource.SchemaRequest, re
 				},
 			},
 			"last_edited_time": schema.StringAttribute{
+				// Changes on every update, same as plain_text.
 				Description: "RFC3339 timestamp of the most recent edit.",
 				Computed:    true,
-				PlanModifiers: []planmodifier.String{
-					stringplanmodifier.UseStateForUnknown(),
-				},
 			},
 			"created_by": schema.StringAttribute{
 				Description: "ID of the user/bot that created the comment.",
