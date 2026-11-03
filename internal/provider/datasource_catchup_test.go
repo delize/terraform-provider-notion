@@ -84,6 +84,7 @@ func TestAccDatabaseEntriesDataSource_FilterAndSorts(t *testing.T) {
 	if parentPageID == "" {
 		t.Skip("NOTION_TEST_PARENT_PAGE_ID not set")
 	}
+	parentPageID = makeIsolatedParentPage(t, notionTestClient(t), "entries-filter-sorts")
 
 	resource.Test(t, resource.TestCase{
 		ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
@@ -106,12 +107,28 @@ resource "notion_database_property_select" "stage" {
   }
 }
 
-resource "notion_database_entry" "rows" {
-  for_each = { "Alpha" = "Draft", "Bravo" = "Review", "Charlie" = "Live" }
-
+# Separate resources rather than for_each, because terraform-plugin-testing
+# can't read state for string-keyed instances.
+resource "notion_database_entry" "alpha" {
   database          = notion_database.filter_test.id
-  title             = each.key
-  select_properties = { "Stage" = each.value }
+  title             = "Alpha"
+  select_properties = { "Stage" = "Draft" }
+
+  depends_on = [notion_database_property_select.stage]
+}
+
+resource "notion_database_entry" "bravo" {
+  database          = notion_database.filter_test.id
+  title             = "Bravo"
+  select_properties = { "Stage" = "Review" }
+
+  depends_on = [notion_database_property_select.stage]
+}
+
+resource "notion_database_entry" "charlie" {
+  database          = notion_database.filter_test.id
+  title             = "Charlie"
+  select_properties = { "Stage" = "Live" }
 
   depends_on = [notion_database_property_select.stage]
 }
@@ -124,7 +141,7 @@ data "notion_database_entries" "not_live" {
   })
   sorts = jsonencode([{ property = "Name", direction = "descending" }])
 
-  depends_on = [notion_database_entry.rows]
+  depends_on = [notion_database_entry.alpha, notion_database_entry.bravo, notion_database_entry.charlie]
 }
 `, parentPageID),
 				Check: resource.ComposeAggregateTestCheckFunc(
