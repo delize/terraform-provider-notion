@@ -280,8 +280,10 @@ func (r *ViewResource) viewToState(v *viewObject, state *ViewResourceModel) {
 	state.Name = types.StringValue(v.Name)
 	state.Type = types.StringValue(v.Type)
 	state.URL = types.StringValue(v.URL)
-	if v.DataSourceID != "" {
-		state.DataSourceID = types.StringValue(v.DataSourceID)
+	// Notion returns the ID with hyphens. Keep the form already in state
+	// when it's the same ID, so a hyphenless config doesn't read as changed.
+	if v.DataSourceID != "" && normalizeID(v.DataSourceID) != normalizeID(state.DataSourceID.ValueString()) {
+		state.DataSourceID = types.StringValue(normalizeID(v.DataSourceID))
 	}
 	state.Filter = jsonRawToTFString(v.Filter)
 	state.Sorts = jsonRawToTFString(v.Sorts)
