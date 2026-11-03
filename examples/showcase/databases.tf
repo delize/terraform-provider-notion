@@ -7,10 +7,11 @@
 # of racing each other.
 
 resource "notion_database" "tasks" {
-  parent             = notion_page.root.id
-  title              = "Tasks (inline database)"
-  title_column_title = "Task"
-  is_inline          = true
+  parent                 = notion_page.root.id
+  title                  = "Tasks (inline database)"
+  title_column_title     = "Task"
+  is_inline              = true
+  show_data_source_title = false
 
   depends_on = [notion_block.root_databases_heading]
 }
@@ -258,11 +259,10 @@ resource "notion_database_entry" "task_docs" {
   depends_on = [notion_database_property_rollup.project_points]
 }
 
-# A table view on the Tasks data source. The data source ID comes from the
-# templates data source, which looks it up from the database ID.
+# A table view on the Tasks data source, the database's only one.
 resource "notion_view" "tasks_table" {
   database_id    = notion_database.tasks.id
-  data_source_id = data.notion_database_templates.tasks.data_source_id
+  data_source_id = notion_database.tasks.data_source_ids[0]
   name           = "All tasks (Terraform view)"
   type           = "table"
 }

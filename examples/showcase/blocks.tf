@@ -1,17 +1,13 @@
 # One notion_block per supported type, on their own page. Each block is
-# placed with `after` so the page reads top to bottom.
-#
-# Blocks whose type has a color set color = "default" explicitly. Notion
-# reports "default" for an uncolored block, and the attribute defaults to an
-# empty string, so leaving it out would fail the apply on the SDK-backed
-# types.
+# placed with `after` so the page reads top to bottom. Blocks without a color
+# are left uncolored, which Notion reports as "default".
 
 resource "notion_page" "blocks" {
   parent_page_id = notion_page.root.id
   title          = "Blocks"
   icon           = "🧱"
 
-  depends_on = [notion_page.markdown]
+  depends_on = [notion_page.markdown_v2]
 }
 
 resource "notion_block" "toc" {
@@ -43,7 +39,6 @@ resource "notion_block" "heading_2_child" {
   parent_id = notion_block.heading_2.id
   type      = "paragraph"
   rich_text = "A toggleable heading can hold blocks. This one is parented on the heading."
-  color     = "default"
 }
 
 resource "notion_block" "heading_3" {
@@ -69,7 +64,6 @@ resource "notion_block" "paragraph" {
   parent_id = notion_page.blocks.id
   type      = "paragraph"
   rich_text = "A paragraph with a [link to the Notion API reference](https://developers.notion.com/reference/intro) in the middle of it."
-  color     = "default"
   after     = notion_block.heading_4.id
 }
 
@@ -85,7 +79,6 @@ resource "notion_block" "bullet_1" {
   parent_id = notion_page.blocks.id
   type      = "bulleted_list_item"
   rich_text = "First bulleted item"
-  color     = "default"
   after     = notion_block.paragraph_colored.id
 }
 
@@ -101,7 +94,6 @@ resource "notion_block" "number_1" {
   parent_id = notion_page.blocks.id
   type      = "numbered_list_item"
   rich_text = "First numbered item"
-  color     = "default"
   after     = notion_block.bullet_2.id
 }
 
@@ -109,7 +101,6 @@ resource "notion_block" "number_2" {
   parent_id = notion_page.blocks.id
   type      = "numbered_list_item"
   rich_text = "Second numbered item"
-  color     = "default"
   after     = notion_block.number_1.id
 }
 
@@ -118,7 +109,6 @@ resource "notion_block" "todo_done" {
   type      = "to_do"
   rich_text = "A checked to-do"
   checked   = true
-  color     = "default"
   after     = notion_block.number_2.id
 }
 
@@ -127,7 +117,6 @@ resource "notion_block" "todo_open" {
   type      = "to_do"
   rich_text = "An unchecked to-do"
   checked   = false
-  color     = "default"
   after     = notion_block.todo_done.id
 }
 
@@ -137,7 +126,6 @@ resource "notion_block" "toggle" {
   parent_id = notion_page.blocks.id
   type      = "toggle"
   rich_text = "A toggle with a nested block"
-  color     = "default"
   after     = notion_block.todo_open.id
 }
 
@@ -145,14 +133,12 @@ resource "notion_block" "toggle_child" {
   parent_id = notion_block.toggle.id
   type      = "paragraph"
   rich_text = "This paragraph is parented on the toggle."
-  color     = "default"
 }
 
 resource "notion_block" "quote" {
   parent_id = notion_page.blocks.id
   type      = "quote"
   rich_text = "A quote block. Plans are cheap, applies are forever."
-  color     = "default"
   after     = notion_block.toggle.id
 }
 
@@ -165,6 +151,24 @@ resource "notion_block" "callout" {
   after     = notion_block.quote.id
 }
 
+resource "notion_block" "callout_native_icon" {
+  parent_id  = notion_page.blocks.id
+  type       = "callout"
+  rich_text  = "A callout with a native Notion icon in green."
+  icon_name  = "pizza"
+  icon_color = "green"
+  after      = notion_block.callout.id
+}
+
+resource "notion_block" "callout_image_icon" {
+  parent_id = notion_page.blocks.id
+  type      = "callout"
+  rich_text = "A callout with an external image as its icon."
+  icon_url  = "https://upload.wikimedia.org/wikipedia/commons/4/45/Notion_app_logo.png"
+  color     = "blue_background"
+  after     = notion_block.callout_native_icon.id
+}
+
 # Code and math
 
 resource "notion_block" "code" {
@@ -173,7 +177,7 @@ resource "notion_block" "code" {
   rich_text = "terraform apply -auto-approve\nterraform plan -detailed-exitcode"
   language  = "shell"
   caption   = "The two commands CI runs against this config"
-  after     = notion_block.callout.id
+  after     = notion_block.callout_image_icon.id
 }
 
 resource "notion_block" "equation" {
@@ -233,14 +237,12 @@ resource "notion_block" "tab_overview_text" {
   parent_id = notion_block.tabs.tab_items[0].id
   type      = "paragraph"
   rich_text = "Content inside the Overview tab."
-  color     = "default"
 }
 
 resource "notion_block" "tab_details_item" {
   parent_id = notion_block.tabs.tab_items[1].id
   type      = "bulleted_list_item"
   rich_text = "Content inside the Details tab."
-  color     = "default"
 }
 
 # Synced blocks. The original holds the content, and the copy mirrors it.
@@ -255,7 +257,6 @@ resource "notion_block" "synced_content" {
   parent_id = notion_block.synced_original.id
   type      = "paragraph"
   rich_text = "This paragraph lives in the original synced block and shows up in its copy."
-  color     = "default"
 }
 
 resource "notion_block" "synced_copy" {

@@ -182,7 +182,6 @@ resource "notion_block" "root_results_heading" {
   parent_id = notion_page.root.id
   type      = "heading_2"
   rich_text = "Data source results"
-  color     = "default"
 
   depends_on = [notion_database.projects]
 }
@@ -191,7 +190,6 @@ resource "notion_block" "root_results_intro" {
   parent_id = notion_page.root.id
   type      = "paragraph"
   rich_text = "Each code block below summarizes one data source, read during the apply that built this page. Captions name the data source."
-  color     = "default"
   after     = notion_block.root_results_heading.id
 }
 

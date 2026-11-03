@@ -31,7 +31,6 @@ resource "notion_block" "root_pages_heading" {
   parent_id = notion_page.root.id
   type      = "heading_2"
   rich_text = "Pages"
-  color     = "default"
   after     = notion_block.root_intro.id
 }
 
@@ -68,6 +67,16 @@ resource "notion_page" "markdown" {
   depends_on = [notion_page.locked]
 }
 
+resource "notion_page" "markdown_v2" {
+  parent_page_id   = notion_page.root.id
+  title            = "Markdown page (v2)"
+  icon             = "🆕"
+  markdown         = file("${path.module}/content/markdown-page-v2.md")
+  markdown_version = "v2"
+
+  depends_on = [notion_page.markdown]
+}
+
 # The blocks page and its content live in blocks.tf.
 
 resource "notion_page" "from_template" {
@@ -101,7 +110,6 @@ resource "notion_block" "root_databases_heading" {
   parent_id = notion_page.root.id
   type      = "heading_2"
   rich_text = "Databases"
-  color     = "default"
 
   depends_on = [notion_page.placed]
 }
