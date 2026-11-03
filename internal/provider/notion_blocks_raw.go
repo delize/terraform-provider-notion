@@ -18,6 +18,10 @@ import (
 // direct HTTP on Notion-Version 2026-03-11, the version the Append block
 // children reference documents.
 //
+// callout blocks go the same way because a callout icon is the full icon
+// union (emoji, external, custom_emoji, and the native `icon` type from
+// 2026-03-25), and the SDK's Icon only models emoji, external, and file.
+//
 // A tab block is a container whose direct children are paragraph blocks.
 // Each paragraph is one tab item: its rich_text is the tab label, its icon
 // is the tab icon, and its own children are the tab's content.
@@ -38,18 +42,15 @@ type rawBlock struct {
 	} `json:"parent"`
 	Heading4  *rawTextBlock `json:"heading_4,omitempty"`
 	Paragraph *rawTextBlock `json:"paragraph,omitempty"`
+	Callout   *rawTextBlock `json:"callout,omitempty"`
 }
 
 type rawTextBlock struct {
 	RichText     []notionapi.RichText `json:"rich_text"`
 	Color        string               `json:"color"`
 	IsToggleable bool                 `json:"is_toggleable"`
-	Icon         *rawIcon             `json:"icon"`
-}
-
-type rawIcon struct {
-	Type  string `json:"type"`
-	Emoji string `json:"emoji,omitempty"`
+	// Icon is the icon union as Notion sent it. Decode it with icon().
+	Icon json.RawMessage `json:"icon"`
 }
 
 // parentID returns the normalized page or block parent ID.
@@ -65,10 +66,15 @@ func (b *rawBlock) parentID() string {
 
 // emoji returns the block's emoji icon, or "" for no icon or a non-emoji one.
 func (t *rawTextBlock) emoji() string {
-	if t == nil || t.Icon == nil || t.Icon.Type != "emoji" {
-		return ""
+	return t.icon().Emoji
+}
+
+// icon decodes the block's icon. It's the zero parsedIcon when there's none.
+func (t *rawTextBlock) icon() parsedIcon {
+	if t == nil {
+		return parsedIcon{}
 	}
-	return t.Icon.Emoji
+	return parseIcon(t.Icon)
 }
 
 // tabItemSpec is one tab item to create or update.
@@ -85,6 +91,26 @@ func heading4Body(rt []notionapi.RichText, color string, toggleable bool) map[st
 	}
 	if color != "" {
 		body["color"] = color
+	}
+	return body
+}
+
+// calloutBody builds the callout payload for create and update. icon is the
+// request object from iconFields.request, or nil to leave the icon alone.
+// Update a block only accepts an icon object, never null, so an icon can be
+// set or changed through the API but not removed. See calloutIconRemoval.
+// An empty color is sent as "default", so removing color from the config
+// resets it and a new callout doesn't pick up some other server default.
+func calloutBody(rt []notionapi.RichText, color string, icon map[string]interface{}) map[string]interface{} {
+	if color == "" {
+		color = "default"
+	}
+	body := map[string]interface{}{
+		"rich_text": richTextOrEmpty(rt),
+		"color":     color,
+	}
+	if icon != nil {
+		body["icon"] = icon
 	}
 	return body
 }
