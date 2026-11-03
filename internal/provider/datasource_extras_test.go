@@ -162,7 +162,6 @@ resource "notion_block" "heading" {
   parent_id = notion_page.test.id
   type      = "heading_1"
   rich_text = "Welcome"
-  color     = "default"
 }
 
 resource "notion_block" "intro" {
@@ -170,7 +169,6 @@ resource "notion_block" "intro" {
   type      = "paragraph"
   rich_text = "Hello, world!"
   after     = notion_block.heading.id
-  color     = "default"
 }
 
 data "notion_blocks" "children" {

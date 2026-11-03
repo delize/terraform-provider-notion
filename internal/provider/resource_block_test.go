@@ -127,7 +127,73 @@ resource "notion_block" "tab_content" {
   parent_id = notion_block.tabs.tab_items[0].id
   type      = "paragraph"
   rich_text = "Content inside the first tab"
-  color     = "default"
 }
 `, parentPageID, title, colorLine, tabItems)
+}
+
+// TestAccBlockDefaultColor checks that a heading_1 with no color plans empty
+// after create even though Notion reports its color as "default", that an
+// explicit "default" round-trips, and that removing a color resets it in
+// Notion. The import step must read the unset color back as "".
+func TestAccBlockDefaultColor(t *testing.T) {
+	if os.Getenv("NOTION_TOKEN") == "" {
+		t.Skip("NOTION_TOKEN not set")
+	}
+	parentPageID := makeIsolatedParentPage(t, notionTestClient(t), "block-color")
+
+	resource.Test(t, resource.TestCase{
+		ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
+		CheckDestroy:             testAccCheckResourcesTrashed(t),
+		Steps: []resource.TestStep{
+			{
+				Config: testAccBlockDefaultColorConfig(parentPageID, ""),
+				Check: resource.ComposeAggregateTestCheckFunc(
+					resource.TestCheckResourceAttr("notion_block.heading", "color", ""),
+					resource.TestCheckResourceAttr("notion_block.explicit", "color", "default"),
+				),
+			},
+			{
+				Config: testAccBlockDefaultColorConfig(parentPageID, "red"),
+				Check:  resource.TestCheckResourceAttr("notion_block.heading", "color", "red"),
+			},
+			{
+				// Removing the color must reset it. If Notion kept red, the
+				// update would fail with an inconsistent result.
+				Config: testAccBlockDefaultColorConfig(parentPageID, ""),
+				Check:  resource.TestCheckResourceAttr("notion_block.heading", "color", ""),
+			},
+			{
+				ResourceName:      "notion_block.heading",
+				ImportState:       true,
+				ImportStateVerify: true,
+			},
+		},
+	})
+}
+
+func testAccBlockDefaultColorConfig(parentPageID, headingColor string) string {
+	colorLine := ""
+	if headingColor != "" {
+		colorLine = fmt.Sprintf("  color     = %q\n", headingColor)
+	}
+	return fmt.Sprintf(`
+resource "notion_page" "test" {
+  parent_page_id = %q
+  title          = "Block color test"
+}
+
+resource "notion_block" "heading" {
+  parent_id = notion_page.test.id
+  type      = "heading_1"
+  rich_text = "No color"
+%s}
+
+resource "notion_block" "explicit" {
+  parent_id = notion_page.test.id
+  type      = "paragraph"
+  rich_text = "Explicit default"
+  after     = notion_block.heading.id
+  color     = "default"
+}
+`, parentPageID, colorLine)
 }

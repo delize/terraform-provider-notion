@@ -146,11 +146,12 @@ var validBlockTypes = []string{
 	"tab",
 }
 
-// Valid block colors (10 foreground + 10 background).
+// Valid block colors, the apiColor enum on Update a block (10 foreground
+// and 10 background, including default_background).
 var validBlockColors = []string{
 	"default", "gray", "brown", "orange", "yellow",
 	"green", "blue", "purple", "pink", "red",
-	"gray_background", "brown_background", "orange_background", "yellow_background",
+	"default_background", "gray_background", "brown_background", "orange_background", "yellow_background",
 	"green_background", "blue_background", "purple_background", "pink_background", "red_background",
 }
 
