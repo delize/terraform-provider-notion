@@ -25,6 +25,7 @@ type ViewQueryDataSourceModel struct {
 	ViewID      types.String `tfsdk:"view_id"`
 	PageSize    types.Int64  `tfsdk:"page_size"`
 	StartCursor types.String `tfsdk:"start_cursor"`
+	QueryID     types.String `tfsdk:"query_id"`
 	NextCursor  types.String `tfsdk:"next_cursor"`
 	HasMore     types.Bool   `tfsdk:"has_more"`
 	RawJSON     types.String `tfsdk:"raw_json"`
@@ -54,8 +55,14 @@ func (d *ViewQueryDataSource) Schema(_ context.Context, _ datasource.SchemaReque
 				Optional:    true,
 			},
 			"start_cursor": schema.StringAttribute{
-				Description: "Opaque cursor returned in a prior response's `next_cursor` to fetch the next page.",
+				Description: "Opaque cursor returned in a prior response's `next_cursor` to fetch the next page. Requires `query_id`.",
 				Optional:    true,
+			},
+			"query_id": schema.StringAttribute{
+				Description: "ID of the cached query. Leave unset to start a new query. To fetch a later page, set it to the " +
+					"`query_id` from the earlier read together with `start_cursor`. Notion keeps a query for about 15 minutes.",
+				Optional: true,
+				Computed: true,
 			},
 			"next_cursor": schema.StringAttribute{
 				Description: "Cursor to fetch the next page, or empty when `has_more` is false.",
@@ -66,7 +73,7 @@ func (d *ViewQueryDataSource) Schema(_ context.Context, _ datasource.SchemaReque
 				Computed:    true,
 			},
 			"raw_json": schema.StringAttribute{
-				Description: "Raw JSON response from POST /v1/views/{id}/query. Use `jsondecode` to access results.",
+				Description: "Raw JSON response from the view query. Use `jsondecode` to access results.",
 				Computed:    true,
 			},
 		},
@@ -93,17 +100,11 @@ func (d *ViewQueryDataSource) Read(ctx context.Context, req datasource.ReadReque
 		return
 	}
 
-	body := map[string]interface{}{}
-	if !config.PageSize.IsNull() {
-		body["page_size"] = config.PageSize.ValueInt64()
-	}
-	if !config.StartCursor.IsNull() && config.StartCursor.ValueString() != "" {
-		body["start_cursor"] = config.StartCursor.ValueString()
-	}
-
-	bodyJSON, err := json.Marshal(body)
-	if err != nil {
-		resp.Diagnostics.AddError("Error encoding view query request", err.Error())
+	queryID := config.QueryID.ValueString()
+	startCursor := config.StartCursor.ValueString()
+	if startCursor != "" && queryID == "" {
+		resp.Diagnostics.AddError("start_cursor needs query_id",
+			"Notion's view cursors belong to a cached query. Set query_id to the query_id from the read that returned the cursor.")
 		return
 	}
 
@@ -113,13 +114,14 @@ func (d *ViewQueryDataSource) Read(ctx context.Context, req datasource.ReadReque
 		return
 	}
 
-	respBody, err := queryView(ctx, token, config.ViewID.ValueString(), bodyJSON)
+	respBody, err := queryView(ctx, token, config.ViewID.ValueString(), queryID, startCursor, config.PageSize.ValueInt64())
 	if err != nil {
 		resp.Diagnostics.AddError("Error querying view", err.Error())
 		return
 	}
 
 	var parsed struct {
+		ID         string `json:"id"`
 		HasMore    bool   `json:"has_more"`
 		NextCursor string `json:"next_cursor"`
 	}
@@ -128,6 +130,10 @@ func (d *ViewQueryDataSource) Read(ctx context.Context, req datasource.ReadReque
 		return
 	}
 
+	if queryID == "" {
+		queryID = parsed.ID
+	}
+	config.QueryID = types.StringValue(queryID)
 	config.NextCursor = types.StringValue(parsed.NextCursor)
 	config.HasMore = types.BoolValue(parsed.HasMore)
 	config.RawJSON = types.StringValue(string(respBody))
