@@ -21,6 +21,7 @@ var (
 	_ resource.Resource                   = &PageResource{}
 	_ resource.ResourceWithImportState    = &PageResource{}
 	_ resource.ResourceWithValidateConfig = &PageResource{}
+	_ resource.ResourceWithModifyPlan     = &PageResource{}
 )
 
 type PageResource struct {
@@ -42,6 +43,7 @@ type PageResourceModel struct {
 	Position          types.String         `tfsdk:"position"`
 	AfterBlockID      types.String         `tfsdk:"after_block_id"`
 	Markdown          types.String         `tfsdk:"markdown"`
+	MarkdownVersion   types.String         `tfsdk:"markdown_version"`
 	MarkdownInsert    *MarkdownInsertModel `tfsdk:"markdown_insert"`
 	TemplateID        types.String         `tfsdk:"template_id"`
 	TemplateTimezone  types.String         `tfsdk:"template_timezone"`
@@ -143,10 +145,11 @@ func (r *PageResource) Schema(_ context.Context, _ resource.SchemaRequest, resp 
 				Optional: true,
 			},
 			"markdown": schema.StringAttribute{
-				Description: "Page content as enhanced markdown. Mutually exclusive with managing content via notion_block resources. " +
+				Description: "Page content as markdown in the syntax set by markdown_version. Sent again only when it or the version changes. Mutually exclusive with managing content via notion_block resources. " +
 					"Note: Notion may normalize the markdown content, so the stored value may differ slightly from what was submitted.",
 				Optional: true,
 			},
+			"markdown_version": markdownVersionResourceAttribute(),
 			"template_id": schema.StringAttribute{
 				Description: "Optional Notion template page ID to apply at creation (2026-01-15 API addition). " +
 					"Once set, the template is applied asynchronously by Notion; the page is initially returned blank. " +
@@ -167,7 +170,7 @@ func (r *PageResource) Schema(_ context.Context, _ resource.SchemaRequest, resp 
 			"markdown_insert": schema.SingleNestedAttribute{
 				Description: "Append or prepend markdown to the page without rewriting the existing content. " +
 					"Each change to `content` or `position` triggers another insert via the Notion insert_content endpoint; " +
-					"this is an imperative trigger, not declarative state. Removing the block does not remove the previously inserted content.",
+					"this is an imperative trigger, not declarative state. Removing the block does not remove the previously inserted content. Other updates, such as a title change, do not insert again.",
 				Optional: true,
 				Attributes: map[string]schema.Attribute{
 					"content": schema.StringAttribute{
@@ -335,17 +338,20 @@ func (r *PageResource) createWithTemplate(ctx context.Context, plan *PageResourc
 }
 
 func (r *PageResource) createWithMarkdown(ctx context.Context, plan *PageResourceModel, resp *resource.CreateResponse) {
-	pageID, pageURL, err := r.mdClient.CreatePageWithMarkdownAndTitle(
+	created, err := r.mdClient.CreatePageWithMarkdownAndTitle(
 		ctx,
 		plan.ParentPageID.ValueString(),
 		plan.Title.ValueString(),
 		plan.Markdown.ValueString(),
+		r.mdClient.resolveMarkdownVersion(plan.MarkdownVersion),
 		r.position(plan),
 	)
 	if err != nil {
 		resp.Diagnostics.AddError("Error creating page with markdown", err.Error())
 		return
 	}
+	pageID, pageURL := created.ID, created.URL
+	appendMarkdownWarnings(&resp.Diagnostics, pageID, created.Warnings)
 
 	plan.ID = types.StringValue(normalizeID(pageID))
 	plan.URL = types.StringValue(pageURL)
@@ -566,24 +572,46 @@ func (r *PageResource) Update(ctx context.Context, req resource.UpdateRequest, r
 		plan.Icon = types.StringValue("")
 	}
 
-	// Update markdown content if set
-	if !plan.Markdown.IsNull() && !plan.Markdown.IsUnknown() {
-		_, err = r.mdClient.ReplacePageMarkdown(ctx, plan.ID.ValueString(), plan.Markdown.ValueString())
+	// Replace the body only when the markdown or its version changed. The
+	// replace sends allow_deleting_content, so resending it on every update
+	// would overwrite edits made in the Notion UI whenever an unrelated
+	// attribute such as the title changed.
+	if markdownNeedsReplace(plan.Markdown, state.Markdown, plan.MarkdownVersion, state.MarkdownVersion) {
+		replaced, err := r.mdClient.ReplacePageMarkdown(ctx, plan.ID.ValueString(), plan.Markdown.ValueString(),
+			r.mdClient.resolveMarkdownVersion(plan.MarkdownVersion))
 		if err != nil {
 			resp.Diagnostics.AddError("Error updating page markdown", err.Error())
 			return
 		}
+		appendMarkdownWarnings(&resp.Diagnostics, plan.ID.ValueString(), replaced.Warnings)
 		// Keep plan value in state rather than API response to avoid normalization diffs
 	}
 
-	if diags := r.applyMarkdownInsert(ctx, &plan); diags != nil {
-		resp.Diagnostics.Append(diags...)
-		if resp.Diagnostics.HasError() {
-			return
+	// An insert adds content every time it runs and can't be undone, so it
+	// runs only when markdown_insert was added or its content or position
+	// changed. An unrelated change such as the title must not insert again.
+	if markdownInsertChanged(plan.MarkdownInsert, state.MarkdownInsert) {
+		if diags := r.applyMarkdownInsert(ctx, &plan); diags != nil {
+			resp.Diagnostics.Append(diags...)
+			if resp.Diagnostics.HasError() {
+				return
+			}
 		}
 	}
 
 	resp.Diagnostics.Append(resp.State.Set(ctx, &plan)...)
+}
+
+// markdownInsertChanged reports whether markdown_insert in the plan differs
+// from state. Removing the block is not a change that inserts anything.
+func markdownInsertChanged(plan, state *MarkdownInsertModel) bool {
+	if plan == nil {
+		return false
+	}
+	if state == nil {
+		return true
+	}
+	return !plan.Content.Equal(state.Content) || !plan.Position.Equal(state.Position)
 }
 
 // applyMarkdownInsert performs an insert_content PATCH if a markdown_insert
@@ -597,18 +625,21 @@ func (r *PageResource) applyMarkdownInsert(ctx context.Context, plan *PageResour
 		return nil
 	}
 
-	_, err := r.mdClient.InsertPageMarkdown(
+	inserted, err := r.mdClient.InsertPageMarkdown(
 		ctx,
 		plan.ID.ValueString(),
 		plan.MarkdownInsert.Content.ValueString(),
 		plan.MarkdownInsert.Position.ValueString(),
+		r.mdClient.resolveMarkdownVersion(plan.MarkdownVersion),
 	)
 	if err != nil {
 		var diags diag.Diagnostics
 		diags.AddError("Error inserting markdown into page", err.Error())
 		return diags
 	}
-	return nil
+	var diags diag.Diagnostics
+	appendMarkdownWarnings(&diags, plan.ID.ValueString(), inserted.Warnings)
+	return diags
 }
 
 func (r *PageResource) Delete(ctx context.Context, req resource.DeleteRequest, resp *resource.DeleteResponse) {
@@ -627,6 +658,13 @@ func (r *PageResource) Delete(ctx context.Context, req resource.DeleteRequest, r
 		resp.Diagnostics.AddError("Error trashing page", err.Error())
 		return
 	}
+}
+
+// ModifyPlan records the markdown_version the next write will use, so a
+// change to the provider default shows up as a diff on pages that manage
+// markdown. See plannedMarkdownVersion.
+func (r *PageResource) ModifyPlan(ctx context.Context, req resource.ModifyPlanRequest, resp *resource.ModifyPlanResponse) {
+	modifyMarkdownVersionPlan(ctx, r.mdClient, req, resp)
 }
 
 func (r *PageResource) ImportState(ctx context.Context, req resource.ImportStateRequest, resp *resource.ImportStateResponse) {

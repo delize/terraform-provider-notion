@@ -6,6 +6,7 @@ import (
 
 	"github.com/hashicorp/terraform-plugin-framework/datasource"
 	"github.com/hashicorp/terraform-plugin-framework/datasource/schema"
+	"github.com/hashicorp/terraform-plugin-framework/schema/validator"
 	"github.com/hashicorp/terraform-plugin-framework/types"
 	"github.com/jomei/notionapi"
 )
@@ -19,6 +20,7 @@ type PageMarkdownDataSource struct {
 type PageMarkdownDataSourceModel struct {
 	PageID            types.String `tfsdk:"page_id"`
 	IncludeTranscript types.Bool   `tfsdk:"include_transcript"`
+	MarkdownVersion   types.String `tfsdk:"markdown_version"`
 	Markdown          types.String `tfsdk:"markdown"`
 }
 
@@ -32,7 +34,7 @@ func (d *PageMarkdownDataSource) Metadata(_ context.Context, req datasource.Meta
 
 func (d *PageMarkdownDataSource) Schema(_ context.Context, _ datasource.SchemaRequest, resp *datasource.SchemaResponse) {
 	resp.Schema = schema.Schema{
-		Description: "Retrieve a Notion page's content as enhanced markdown.",
+		Description: "Retrieve a Notion page's content as markdown.",
 		Attributes: map[string]schema.Attribute{
 			"page_id": schema.StringAttribute{
 				Description: "The ID of the page to retrieve markdown for.",
@@ -42,8 +44,16 @@ func (d *PageMarkdownDataSource) Schema(_ context.Context, _ datasource.SchemaRe
 				Description: "Include full AI meeting note transcripts in the markdown. Without it, each meeting note renders as a placeholder with its URL. Defaults to false.",
 				Optional:    true,
 			},
+			"markdown_version": schema.StringAttribute{
+				Description: "Markdown syntax to read the page in: `v2` (Notion-flavored Markdown) or `v1` (enhanced markdown, deprecated by Notion). " +
+					"Overrides the provider's markdown_version. When neither is set, Notion returns v1.",
+				Optional: true,
+				Validators: []validator.String{
+					MarkdownVersionValidator(),
+				},
+			},
 			"markdown": schema.StringAttribute{
-				Description: "The page content rendered as enhanced markdown.",
+				Description: "The page content rendered as markdown in the requested markdown_version.",
 				Computed:    true,
 			},
 		},
@@ -70,7 +80,8 @@ func (d *PageMarkdownDataSource) Read(ctx context.Context, req datasource.ReadRe
 		return
 	}
 
-	mdResp, err := d.mdClient.GetPageMarkdownWithTranscript(ctx, config.PageID.ValueString(), config.IncludeTranscript.ValueBool())
+	mdResp, err := d.mdClient.GetPageMarkdownWithTranscript(ctx, config.PageID.ValueString(), config.IncludeTranscript.ValueBool(),
+		d.mdClient.resolveMarkdownVersion(config.MarkdownVersion))
 	if err != nil {
 		resp.Diagnostics.AddError("Error reading page markdown", err.Error())
 		return
