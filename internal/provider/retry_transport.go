@@ -45,7 +45,9 @@ import (
 //
 // What we do NOT retry
 //
-//   - JSON 4xx other than 429. These are client errors and almost always
+//   - A JSON 409 "conflict_error", even for requests marked withNoReplay.
+//     Notion rolls those transactions back, so nothing was saved.
+//   - JSON 4xx other than 409 conflicts and 429. These are client errors and almost always
 //     permanent; retrying would just waste time and surface a confusing
 //     latency profile.
 //   - 429. The jomei SDK already handles these with Retry-After semantics;
@@ -155,6 +157,14 @@ func (rt *retryTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 			continue
 		}
 
+		// A conflict_error means Notion rolled the transaction back because
+		// another write to the same object landed first. Nothing was saved,
+		// so it's retried even for requests marked withNoReplay.
+		if isConflictError(resp) {
+			lastErr, lastResp = nil, resp
+			continue
+		}
+
 		if isWriteGatewayTimeout(req, resp) || (noReplay(req) && isJSONResponse(resp)) || !shouldRetryResponse(resp) {
 			return edgeErrorAsJSON(resp), nil
 		}
@@ -247,6 +257,42 @@ func shouldRetryResponse(resp *http.Response) bool {
 	return false
 }
 
+// isConflictError reports whether resp is Notion's JSON 409
+// "conflict_error", which Notion documents as a transaction that "could not
+// be completed" and should be tried again. Terraform's parallel applies hit it
+// when several blocks are written to the same page at once. The body is
+// buffered and restored so the caller can still read the error.
+func isConflictError(resp *http.Response) bool {
+	if resp.StatusCode != http.StatusConflict || !isJSONResponse(resp) {
+		return false
+	}
+	return peekErrorCode(resp) == "conflict_error"
+}
+
+// peekErrorCode reads the "code" field of a JSON error body and puts the body
+// back, so the caller still sees it untouched.
+func peekErrorCode(resp *http.Response) string {
+	if resp.Body == nil {
+		return ""
+	}
+	orig := resp.Body
+	body, err := io.ReadAll(io.LimitReader(orig, 1<<16))
+	resp.Body = struct {
+		io.Reader
+		io.Closer
+	}{io.MultiReader(bytes.NewReader(body), orig), orig}
+	if err != nil {
+		return ""
+	}
+	var apiErr struct {
+		Code string `json:"code"`
+	}
+	if json.Unmarshal(body, &apiErr) != nil {
+		return ""
+	}
+	return apiErr.Code
+}
+
 // isWriteGatewayTimeout reports whether resp is Notion's JSON
 // "gateway_timeout" 504 for a POST or PATCH. The write may have been saved,
 // so it must not be blindly replayed (see the type comment). The body is
@@ -258,30 +304,10 @@ func isWriteGatewayTimeout(req *http.Request, resp *http.Response) bool {
 	if req.Method != http.MethodPost && req.Method != http.MethodPatch {
 		return false
 	}
-	if !strings.HasPrefix(strings.ToLower(resp.Header.Get("Content-Type")), "application/json") {
+	if !isJSONResponse(resp) {
 		return false
 	}
-	if resp.Body == nil {
-		return false
-	}
-	// Peek at most 64 KiB, then put the peeked bytes back in front of the
-	// unread remainder so the caller sees the full, untouched body.
-	orig := resp.Body
-	body, err := io.ReadAll(io.LimitReader(orig, 1<<16))
-	resp.Body = struct {
-		io.Reader
-		io.Closer
-	}{io.MultiReader(bytes.NewReader(body), orig), orig}
-	if err != nil {
-		return false
-	}
-	var apiErr struct {
-		Code string `json:"code"`
-	}
-	if json.Unmarshal(body, &apiErr) != nil {
-		return false
-	}
-	return apiErr.Code == "gateway_timeout"
+	return peekErrorCode(resp) == "gateway_timeout"
 }
 
 // computeDelay returns the backoff for a given retry attempt. If the
