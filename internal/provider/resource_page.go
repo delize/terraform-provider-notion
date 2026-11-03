@@ -79,7 +79,7 @@ func (r *PageResource) Schema(_ context.Context, _ resource.SchemaRequest, resp 
 				Description: "The URL of the page.",
 				Computed:    true,
 				PlanModifiers: []planmodifier.String{
-					stringplanmodifier.UseStateForUnknown(),
+					urlFollowsTitle(),
 				},
 			},
 			"icon": schema.StringAttribute{
@@ -173,6 +173,14 @@ func (r *PageResource) Create(ctx context.Context, req resource.CreateRequest, r
 	default:
 		r.createWithoutMarkdown(ctx, &plan, resp)
 	}
+	if plan.ID.IsUnknown() || plan.ID.ValueString() == "" {
+		return
+	}
+	// The page exists from here on, so save it even when a later step such
+	// as markdown_insert or the icon update failed. With an error, Terraform
+	// marks it tainted and replaces it on the next apply. Returning without
+	// state would orphan the page.
+	resp.Diagnostics.Append(resp.State.Set(ctx, &plan)...)
 }
 
 func (r *PageResource) createWithTemplate(ctx context.Context, plan *PageResourceModel, resp *resource.CreateResponse) {
@@ -212,7 +220,6 @@ func (r *PageResource) createWithTemplate(ctx context.Context, plan *PageResourc
 		}
 	}
 
-	resp.Diagnostics.Append(resp.State.Set(ctx, plan)...)
 }
 
 func (r *PageResource) createWithMarkdown(ctx context.Context, plan *PageResourceModel, resp *resource.CreateResponse) {
@@ -258,7 +265,6 @@ func (r *PageResource) createWithMarkdown(ctx context.Context, plan *PageResourc
 		plan.Icon = types.StringValue("")
 	}
 
-	resp.Diagnostics.Append(resp.State.Set(ctx, plan)...)
 }
 
 func (r *PageResource) createWithoutMarkdown(ctx context.Context, plan *PageResourceModel, resp *resource.CreateResponse) {
@@ -304,7 +310,6 @@ func (r *PageResource) createWithoutMarkdown(ctx context.Context, plan *PageReso
 		}
 	}
 
-	resp.Diagnostics.Append(resp.State.Set(ctx, plan)...)
 }
 
 func (r *PageResource) Read(ctx context.Context, req resource.ReadRequest, resp *resource.ReadResponse) {

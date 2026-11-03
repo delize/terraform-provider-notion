@@ -77,7 +77,7 @@ func (r *DatabaseEntryResource) Schema(_ context.Context, _ resource.SchemaReque
 				Description: "The URL of the entry.",
 				Computed:    true,
 				PlanModifiers: []planmodifier.String{
-					stringplanmodifier.UseStateForUnknown(),
+					urlFollowsTitle(),
 				},
 			},
 			"markdown": schema.StringAttribute{
