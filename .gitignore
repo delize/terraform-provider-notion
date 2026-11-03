@@ -6,3 +6,4 @@ dist/
 *.tfplan
 .terraform.lock.hcl
 crash.log
+__pycache__/
