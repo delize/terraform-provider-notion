@@ -330,6 +330,7 @@ func TestViewJSONReadback(t *testing.T) {
 		{"unknown on create", types.StringUnknown(), notion, true, canonical},
 		{"unset", types.StringValue(""), json.RawMessage(`null`), false, ""},
 		{"empty sorts", types.StringValue("[]"), nil, false, "keep"},
+		{"cleared with jsonencode(null)", types.StringValue("null"), json.RawMessage(`null`), false, "keep"},
 		{"cleared in Notion", types.StringValue(`[{"timestamp":"created_time","direction":"ascending"}]`), json.RawMessage(`null`), false, ""},
 	}
 	for _, c := range cases {

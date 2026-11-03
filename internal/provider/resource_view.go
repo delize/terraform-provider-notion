@@ -425,7 +425,7 @@ func readPlanJSON(v types.String, field string) (json.RawMessage, error) {
 // documents no other defaults it adds.
 func viewJSONReadback(prior types.String, raw json.RawMessage, mergedKeys bool) types.String {
 	if len(raw) == 0 || string(raw) == "null" {
-		if !prior.IsNull() && !prior.IsUnknown() && isEmptyJSONCollection(prior.ValueString()) {
+		if !prior.IsNull() && !prior.IsUnknown() && isEmptyJSONValue(prior.ValueString()) {
 			return prior
 		}
 		return types.StringValue("")
@@ -447,15 +447,17 @@ func viewJSONReadback(prior types.String, raw json.RawMessage, mergedKeys bool) 
 	return types.StringValue(string(b))
 }
 
-// isEmptyJSONCollection reports whether s is [] or {}. Sending an empty
-// sorts array or quick_filters object leaves nothing set, and Notion then
-// returns null.
-func isEmptyJSONCollection(s string) bool {
+// isEmptyJSONValue reports whether s is null, [] or {}. A config of
+// jsonencode(null) clears the value in Notion, and an empty sorts array
+// leaves nothing set. Notion returns null for both.
+func isEmptyJSONValue(s string) bool {
 	var v interface{}
 	if err := json.Unmarshal([]byte(s), &v); err != nil {
 		return false
 	}
 	switch c := v.(type) {
+	case nil:
+		return true
 	case []interface{}:
 		return len(c) == 0
 	case map[string]interface{}:
