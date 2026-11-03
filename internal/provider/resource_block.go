@@ -244,7 +244,7 @@ func (r *BlockResource) Schema(_ context.Context, _ resource.SchemaRequest, resp
 				Description: "Columns of a column_list block, in order. Required to create a column_list, which needs at least two columns, and not allowed on other types. " +
 					"Put a column's content in it with notion_block resources whose parent_id is the column's id. " +
 					"Notion won't create an empty column, so each new column starts with one empty paragraph, which the provider doesn't track. " +
-					"Columns are matched by position: a changed width_ratio updates that column in place, new columns are added at the end, " +
+					"Columns are matched by position. A changed width_ratio updates that column in place, new columns are added at the end, " +
 					"and removing columns from the end deletes those columns and their content.",
 				Optional: true,
 				Computed: true,
