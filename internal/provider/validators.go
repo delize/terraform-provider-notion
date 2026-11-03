@@ -146,11 +146,12 @@ var validBlockTypes = []string{
 	"tab",
 }
 
-// Valid block colors (10 foreground + 10 background).
+// Valid block colors, the apiColor enum on Update a block (10 foreground
+// and 10 background, including default_background).
 var validBlockColors = []string{
 	"default", "gray", "brown", "orange", "yellow",
 	"green", "blue", "purple", "pink", "red",
-	"gray_background", "brown_background", "orange_background", "yellow_background",
+	"default_background", "gray_background", "brown_background", "orange_background", "yellow_background",
 	"green_background", "blue_background", "purple_background", "pink_background", "red_background",
 }
 
@@ -290,4 +291,37 @@ func (v viewTypeValidator) ValidateString(_ context.Context, req validator.Strin
 // ViewTypeValidator returns a validator for the notion_view type attribute.
 func ViewTypeValidator() validator.String {
 	return viewTypeValidator{}
+}
+
+// markdownVersionValidator validates a markdown_version value. Notion
+// accepts "v1" (enhanced markdown, deprecated) and "v2" (Notion-flavored
+// Markdown).
+type markdownVersionValidator struct{}
+
+func (v markdownVersionValidator) Description(_ context.Context) string {
+	return `value must be "v1" or "v2"`
+}
+
+func (v markdownVersionValidator) MarkdownDescription(ctx context.Context) string {
+	return v.Description(ctx)
+}
+
+func (v markdownVersionValidator) ValidateString(_ context.Context, req validator.StringRequest, resp *validator.StringResponse) {
+	if req.ConfigValue.IsNull() || req.ConfigValue.IsUnknown() {
+		return
+	}
+	val := req.ConfigValue.ValueString()
+	if val == "v1" || val == "v2" {
+		return
+	}
+	resp.Diagnostics.AddAttributeError(
+		req.Path,
+		"Invalid Markdown Version",
+		fmt.Sprintf(`Expected "v1" or "v2", got: %s`, val),
+	)
+}
+
+// MarkdownVersionValidator returns a validator for markdown_version.
+func MarkdownVersionValidator() validator.String {
+	return markdownVersionValidator{}
 }

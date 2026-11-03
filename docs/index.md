@@ -34,6 +34,16 @@ provider "notion" {
 }
 ```
 
+## Markdown version
+
+Notion's markdown endpoints accept two syntaxes. `v2` is Notion-flavored Markdown and `v1` is enhanced markdown, which Notion has deprecated and will reject in its next API version. Set `markdown_version` to choose the default for `notion_page`, `notion_database_entry`, and the `notion_page_markdown` data source. Each of them can override it. When it's unset the provider leaves the field out and Notion uses `v1`. Comments don't use it yet. See [Markdown versions](resources/page.md#markdown-versions) for the syntax changes and what happens when the version changes.
+
+```terraform
+provider "notion" {
+  markdown_version = "v2"
+}
+```
+
 ## Admin API
 
 Enterprise organizations can manage permission groups, legal holds, custom agent governance, MCP client access, personal access tokens, and workspace exports through Notion's [Admin API](https://developers.notion.com/reference/admin/intro) (reference added 2026-08-24). It uses an organization bot token, which an organization owner creates in the organization console with per-resource scopes. Set it as `admin_token` or `NOTION_ADMIN_TOKEN`. A provider block can set only `admin_token` when it manages nothing but Admin API resources.
@@ -139,7 +149,7 @@ provider "notion" {
 - `notion_database_property_last_edited_by` - Last edited by property (automatic)
 
 ### Custom Agent Resources (beta)
-- `notion_agent_settings` - Enabled status and credit limit of an existing Custom Agent (Agent APIs public beta, 2026-08-20)
+- `notion_agent_settings` - Name, description, model, enabled status, and credit limit of an existing Custom Agent (Agent APIs generally available since 2026-11-02)
 
 ## Data Sources
 
@@ -184,5 +194,6 @@ provider "notion" {
 ### Optional
 
 - `admin_token` (String, Sensitive) Notion Admin API organization bot token, used only by the Admin API resources, data sources, and actions. Requires an Enterprise plan. Can also be set via the `NOTION_ADMIN_TOKEN` environment variable.
+- `markdown_version` (String) Default markdown syntax for pages, database entries, and the `notion_page_markdown` data source: `v2` or `v1`. Resources can override it. When unset, the field is left out of requests and Notion uses `v1`.
 - `silent_notifications` (Boolean) Create and update pages without sending Notion notifications. Defaults to `false`.
 - `token` (String, Sensitive) Notion API token. Can also be set via the `NOTION_TOKEN` environment variable.

@@ -11,15 +11,19 @@ import (
 	"strconv"
 )
 
-// Notion Agent APIs (public beta, 2026-08-20). The jomei/notionapi SDK has no
-// agent support, so these endpoints go over doNotionRequestWithVersion.
+// Notion Agent APIs (public beta 2026-08-20, generally available 2026-11-02).
+// The jomei/notionapi SDK has no agent support, so these endpoints go over
+// doNotionRequestWithVersion.
 //
 // Every endpoint here documents Notion-Version 2026-03-11 and no Notion-Beta
 // header. Both personal access tokens and connection tokens work. A
 // connection token needs the "View sessions and interact with agents"
-// capability, and access is checked per agent: edit access to change status,
-// full access to read or change the credit limit. Fields the caller can't
-// read come back as the string "hidden" instead of being omitted.
+// capability to read agents and "Edit selected agents" to change one. Access
+// is also checked per agent, edit access to change name, description, model,
+// or status and full access to read or change the credit limit. A connection
+// can't change a credit limit at all, so that needs a personal access token.
+// Fields the caller can't read come back as the string "hidden" instead of
+// being omitted.
 
 const agentAPIVersion = "2026-03-11"
 
@@ -39,8 +43,18 @@ type agentObject struct {
 	PauseReason        *string         `json:"pause_reason"`
 	CreditLimit        json.RawMessage `json:"credit_limit"`
 	LastRunAt          json.RawMessage `json:"last_run_at"`
+	Model              *agentModel     `json:"model"`
 	CreatedTime        string          `json:"created_time"`
 	LastEditedTime     string          `json:"last_edited_time"`
+}
+
+// agentModel is the agent's model selection. Mode is "auto" or "pinned".
+// A pinned model reads back with a null ID when it is an early-access model,
+// and the request schema rejects an id next to "auto", so ID is omitted when
+// nil.
+type agentModel struct {
+	Mode string  `json:"mode"`
+	ID   *string `json:"id,omitempty"`
 }
 
 type agentInsights struct {
@@ -181,17 +195,22 @@ func queryAgents(ctx context.Context, token string, req map[string]interface{}, 
 	}
 }
 
-// updateAgentStatus sends the status through PATCH /v1/agents/{id}. Since
-// the Agent APIs became generally available (2026-11-02) that endpoint takes
-// status, and the old PATCH /v1/agents/{id}/status is deprecated. Notion
-// documents "active" as re-enabling an agent that was disabled.
-func updateAgentStatus(ctx context.Context, token, agentID string, enabled bool) error {
-	status := "disabled"
-	if enabled {
-		status = "active"
+// updateAgent sends PATCH /v1/agents/{id} with the given fields and returns
+// the updated agent. Since the Agent APIs became generally available
+// (2026-11-02) this one endpoint takes name, description, model, and status,
+// and Notion saves all of them together or none. Callers send only the fields
+// that change. Sending "disabled" for an agent that is already disabled fails
+// the whole request, so status needs the statusChangeNeeded guard.
+func updateAgent(ctx context.Context, token, agentID string, fields map[string]interface{}) (*agentObject, error) {
+	respBody, err := doAgentRequest(ctx, http.MethodPatch, agentURL(agentID, ""), token, fields)
+	if err != nil {
+		return nil, err
 	}
-	_, err := doAgentRequest(ctx, http.MethodPatch, agentURL(agentID, ""), token, map[string]string{"status": status})
-	return err
+	var a agentObject
+	if err := json.Unmarshal(respBody, &a); err != nil {
+		return nil, fmt.Errorf("failed to parse update agent response: %w", err)
+	}
+	return &a, nil
 }
 
 // updateAgentCreditLimit calls PATCH /v1/agents/{id}/credit_limit. A nil
