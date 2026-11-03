@@ -142,9 +142,9 @@ data "notion_view_query" "test" {
 // post-apply plan must be empty, which fails if Notion's copy of any JSON
 // attribute differs from the config in a way the provider doesn't treat as
 // the same value. The filter and sorts name properties ("Priority",
-// "Name"), so a run that fails there means Notion returns property IDs
-// instead. The quick filter key and property_id use the title property's
-// ID ("title"), since the views guide says those come back as IDs.
+// "Name"), which Notion answers with property IDs, and Notion lists every
+// property in the table configuration. The provider matches both through
+// the data source schema.
 func TestAccViewJSONAttributes(t *testing.T) {
 	if os.Getenv("NOTION_TOKEN") == "" {
 		t.Skip("NOTION_TOKEN not set")
@@ -160,7 +160,7 @@ func TestAccViewJSONAttributes(t *testing.T) {
 				Config: testAccViewJSONConfig(parentID, "High", "ascending", true),
 				Check: resource.ComposeAggregateTestCheckFunc(
 					resource.TestCheckResourceAttr(addr, "filter", `{"property":"Priority","select":{"equals":"High"}}`),
-					resource.TestCheckResourceAttr(addr, "sorts", `[{"direction":"ascending","property":"Name"},{"direction":"descending","timestamp":"created_time"}]`),
+					resource.TestCheckResourceAttr(addr, "sorts", `[{"direction":"ascending","property":"Name"},{"direction":"descending","property":"Priority"}]`),
 					resource.TestCheckResourceAttr(addr, "quick_filters", `{"title":{}}`),
 					resource.TestCheckResourceAttr(addr, "configuration",
 						`{"properties":[{"property_id":"title","visible":true,"width":320}],"type":"table","wrap_cells":true}`),
@@ -178,9 +178,10 @@ func TestAccViewJSONAttributes(t *testing.T) {
 				ResourceName:      addr,
 				ImportState:       true,
 				ImportStateVerify: true,
-				// Notion may return configuration fields the config doesn't
-				// set, which the provider ignores only against a config.
-				ImportStateVerifyIgnore: []string{"configuration"},
+				// Notion returns configuration fields the config doesn't set,
+				// and property IDs where the config names properties. The
+				// provider matches those only against a config.
+				ImportStateVerifyIgnore: []string{"configuration", "filter", "sorts"},
 			},
 		},
 	})
@@ -216,7 +217,7 @@ resource "notion_view" "v" {
 
   sorts = jsonencode([
     { property = "Name", direction = %q },
-    { timestamp = "created_time", direction = "descending" },
+    { property = "Priority", direction = "descending" },
   ])
 
   quick_filters = jsonencode({ title = {} })

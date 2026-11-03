@@ -23,8 +23,9 @@ import (
 // without buying type safety beyond "is this valid JSON".
 
 var (
-	_ resource.Resource                = &ViewResource{}
-	_ resource.ResourceWithImportState = &ViewResource{}
+	_ resource.Resource                   = &ViewResource{}
+	_ resource.ResourceWithImportState    = &ViewResource{}
+	_ resource.ResourceWithValidateConfig = &ViewResource{}
 )
 
 type ViewResource struct {
@@ -192,7 +193,16 @@ func (r *ViewResource) Create(ctx context.Context, req resource.CreateRequest, r
 		return
 	}
 
-	r.viewToState(v, &plan)
+	refs, err := viewRefsFor(ctx, token, v, plan)
+	if err != nil {
+		// The view exists. Store it with Notion's values so it isn't
+		// orphaned, and report the error so Terraform taints it.
+		r.viewToState(v, &plan, nil)
+		resp.Diagnostics.Append(resp.State.Set(ctx, &plan)...)
+		resp.Diagnostics.AddError("Error reading view properties", err.Error())
+		return
+	}
+	r.viewToState(v, &plan, refs)
 	resp.Diagnostics.Append(resp.State.Set(ctx, &plan)...)
 }
 
@@ -219,7 +229,12 @@ func (r *ViewResource) Read(ctx context.Context, req resource.ReadRequest, resp 
 		return
 	}
 
-	r.viewToState(v, &state)
+	refs, err := viewRefsFor(ctx, token, v, state)
+	if err != nil {
+		resp.Diagnostics.AddError("Error reading view properties", err.Error())
+		return
+	}
+	r.viewToState(v, &state, refs)
 	resp.Diagnostics.Append(resp.State.Set(ctx, &state)...)
 }
 
@@ -242,18 +257,27 @@ func (r *ViewResource) Update(ctx context.Context, req resource.UpdateRequest, r
 		resp.Diagnostics.AddError("Invalid view JSON attribute", err.Error())
 		return
 	}
-	qf, err := clearRemovedQuickFilters(payload.QuickFilters, prior.QuickFilters)
-	if err != nil {
-		resp.Diagnostics.AddError("Invalid view JSON attribute", err.Error())
-		return
-	}
-	payload.QuickFilters = qf
-
 	token, err := tokenForClient(r.client)
 	if err != nil {
 		resp.Diagnostics.AddError("Error updating view", err.Error())
 		return
 	}
+
+	keepPriorWhereUnknown(&plan, prior)
+	var refs *viewPropertyRefs
+	if viewJSONHasContent(plan.Filter.ValueString(), plan.Sorts.ValueString(), plan.QuickFilters.ValueString(), plan.Configuration.ValueString(), prior.QuickFilters.ValueString()) {
+		if refs, err = fetchViewPropertyRefs(ctx, token, plan.DataSourceID.ValueString()); err != nil {
+			resp.Diagnostics.AddError("Error reading view properties", err.Error())
+			return
+		}
+	}
+
+	qf, err := clearRemovedQuickFilters(payload.QuickFilters, prior.QuickFilters, refs)
+	if err != nil {
+		resp.Diagnostics.AddError("Invalid view JSON attribute", err.Error())
+		return
+	}
+	payload.QuickFilters = qf
 
 	v, err := updateView(ctx, token, plan.ID.ValueString(), payload)
 	if err != nil {
@@ -261,8 +285,7 @@ func (r *ViewResource) Update(ctx context.Context, req resource.UpdateRequest, r
 		return
 	}
 
-	keepPriorWhereUnknown(&plan, prior)
-	r.viewToState(v, &plan)
+	r.viewToState(v, &plan, refs)
 	resp.Diagnostics.Append(resp.State.Set(ctx, &plan)...)
 }
 
@@ -285,11 +308,35 @@ func (r *ViewResource) Delete(ctx context.Context, req resource.DeleteRequest, r
 	}
 }
 
+func (r *ViewResource) ValidateConfig(ctx context.Context, req resource.ValidateConfigRequest, resp *resource.ValidateConfigResponse) {
+	var sorts types.String
+	resp.Diagnostics.Append(req.Config.GetAttribute(ctx, path.Root("sorts"), &sorts)...)
+	if sorts.IsNull() || sorts.IsUnknown() {
+		return
+	}
+	if err := timestampSortError(sorts.ValueString()); err != nil {
+		resp.Diagnostics.AddAttributeError(path.Root("sorts"), "Timestamp sort on a view", err.Error())
+	}
+}
+
+// viewRefsFor reads the data source schema when any of the view's JSON
+// attributes in state has a value to compare, and returns nil otherwise.
+func viewRefsFor(ctx context.Context, token string, v *viewObject, state ViewResourceModel) (*viewPropertyRefs, error) {
+	if !viewJSONHasContent(state.Filter.ValueString(), state.Sorts.ValueString(), state.QuickFilters.ValueString(), state.Configuration.ValueString()) {
+		return nil, nil
+	}
+	ds := v.DataSourceID
+	if ds == "" {
+		ds = state.DataSourceID.ValueString()
+	}
+	return fetchViewPropertyRefs(ctx, token, ds)
+}
+
 func (r *ViewResource) ImportState(ctx context.Context, req resource.ImportStateRequest, resp *resource.ImportStateResponse) {
 	resource.ImportStatePassthroughID(ctx, path.Root("id"), req, resp)
 }
 
-func (r *ViewResource) viewToState(v *viewObject, state *ViewResourceModel) {
+func (r *ViewResource) viewToState(v *viewObject, state *ViewResourceModel, refs *viewPropertyRefs) {
 	state.ID = types.StringValue(normalizeID(v.ID))
 	state.Name = types.StringValue(v.Name)
 	state.Type = types.StringValue(v.Type)
@@ -307,10 +354,10 @@ func (r *ViewResource) viewToState(v *viewObject, state *ViewResourceModel) {
 	// Keep the configured JSON when Notion's copy means the same thing, so
 	// key order, whitespace, and merged configuration fields don't fail the
 	// apply or plan a diff. See viewJSONReadback.
-	state.Filter = viewJSONReadback(state.Filter, v.Filter, false)
-	state.Sorts = viewJSONReadback(state.Sorts, v.Sorts, false)
-	state.QuickFilters = viewJSONReadback(state.QuickFilters, v.QuickFilters, false)
-	state.Configuration = viewJSONReadback(state.Configuration, v.Configuration, true)
+	state.Filter = viewJSONReadback(state.Filter, v.Filter, viewJSONFilter, refs)
+	state.Sorts = viewJSONReadback(state.Sorts, v.Sorts, viewJSONSorts, refs)
+	state.QuickFilters = viewJSONReadback(state.QuickFilters, v.QuickFilters, viewJSONQuickFilters, refs)
+	state.Configuration = viewJSONReadback(state.Configuration, v.Configuration, viewJSONConfiguration, refs)
 }
 
 // keepPriorWhereUnknown fills JSON attributes the plan left unknown (not in
@@ -335,11 +382,12 @@ func keepPriorWhereUnknown(plan *ViewResourceModel, prior ViewResourceModel) {
 // quick filters it doesn't name and removes one set to null, so without
 // this a removed quick filter would stay in Notion.
 //
-// Keys can be property names or IDs, and Notion returns IDs. A state that
-// holds Notion's copy can name a property by ID while the config names it,
-// so nulling the ID could remove the filter the config sets. To stay safe,
-// nothing is nulled when the plan adds a key the prior state doesn't have.
-func clearRemovedQuickFilters(planned json.RawMessage, prior types.String) (json.RawMessage, error) {
+// Keys can be property names or IDs, and Notion returns IDs. refs matches
+// the two, so a key the plan names and the prior state holds by ID counts
+// as kept. Without refs, nothing is nulled when the plan adds a key the
+// prior state doesn't have, since nulling the ID could remove the filter
+// the config sets.
+func clearRemovedQuickFilters(planned json.RawMessage, prior types.String, refs *viewPropertyRefs) (json.RawMessage, error) {
 	if len(planned) == 0 || prior.IsNull() || prior.IsUnknown() || prior.ValueString() == "" {
 		return planned, nil
 	}
@@ -347,14 +395,20 @@ func clearRemovedQuickFilters(planned json.RawMessage, prior types.String) (json
 	if json.Unmarshal(planned, &plan) != nil || json.Unmarshal([]byte(prior.ValueString()), &old) != nil {
 		return planned, nil
 	}
+	planKeys := map[string]bool{}
 	for k := range plan {
-		if _, ok := old[k]; !ok {
-			return planned, nil
+		planKeys[refs.canonical(k)] = true
+	}
+	if refs == nil {
+		for k := range plan {
+			if _, ok := old[k]; !ok {
+				return planned, nil
+			}
 		}
 	}
 	changed := false
 	for k := range old {
-		if _, ok := plan[k]; !ok {
+		if !planKeys[refs.canonical(k)] {
 			plan[k] = nil
 			changed = true
 		}
@@ -416,14 +470,12 @@ func readPlanJSON(v types.String, field string) (json.RawMessage, error) {
 // for a filter, sorts, quick filters, or configuration that isn't set, which
 // is stored as "" as before.
 //
-// Two values match when they decode to the same JSON, so key order and
-// whitespace don't matter. With mergedKeys set (configuration), keys that
-// only Notion's value has are ignored at the top level. The views guide says
-// configuration updates are a shallow merge that preserves omitted fields,
-// so Notion's configuration can carry top-level fields the config never
-// set. Nested values, and every other attribute, must match exactly. Notion
-// documents no other defaults it adds.
-func viewJSONReadback(prior types.String, raw json.RawMessage, mergedKeys bool) types.String {
+// Two values match when they decode to the same JSON once property names
+// and IDs are put in one form with refs, so key order, whitespace, and
+// naming a property instead of using its ID don't matter. Configuration
+// matches when Notion's value contains everything the config sets, see
+// viewJSONSubset. Filter, sorts, and quick filters must match exactly.
+func viewJSONReadback(prior types.String, raw json.RawMessage, kind viewJSONKind, refs *viewPropertyRefs) types.String {
 	if len(raw) == 0 || string(raw) == "null" {
 		if !prior.IsNull() && !prior.IsUnknown() && isEmptyJSONValue(prior.ValueString()) {
 			return prior
@@ -436,7 +488,7 @@ func viewJSONReadback(prior types.String, raw json.RawMessage, mergedKeys bool) 
 	}
 	if !prior.IsNull() && !prior.IsUnknown() && prior.ValueString() != "" {
 		var want interface{}
-		if err := json.Unmarshal([]byte(prior.ValueString()), &want); err == nil && viewJSONEqual(want, got, mergedKeys) {
+		if err := json.Unmarshal([]byte(prior.ValueString()), &want); err == nil && viewJSONMatches(want, got, kind, refs) {
 			return prior
 		}
 	}
@@ -466,23 +518,21 @@ func isEmptyJSONValue(s string) bool {
 	return false
 }
 
-func viewJSONEqual(want, got interface{}, mergedKeys bool) bool {
-	w, wok := want.(map[string]interface{})
-	g, gok := got.(map[string]interface{})
-	if !mergedKeys || !wok || !gok {
-		return reflect.DeepEqual(want, got)
+type viewJSONKind int
+
+const (
+	viewJSONFilter viewJSONKind = iota
+	viewJSONSorts
+	viewJSONQuickFilters
+	viewJSONConfiguration
+)
+
+func viewJSONMatches(want, got interface{}, kind viewJSONKind, refs *viewPropertyRefs) bool {
+	keys := kind == viewJSONQuickFilters
+	want = canonicalViewRefs(want, refs, keys)
+	got = canonicalViewRefs(got, refs, keys)
+	if kind == viewJSONConfiguration {
+		return viewJSONSubset(want, got)
 	}
-	for k, wv := range w {
-		gv, present := g[k]
-		if wv == nil {
-			if present && gv != nil {
-				return false
-			}
-			continue
-		}
-		if !present || !reflect.DeepEqual(wv, gv) {
-			return false
-		}
-	}
-	return true
+	return reflect.DeepEqual(want, got)
 }

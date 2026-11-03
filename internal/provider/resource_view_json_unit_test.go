@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"net/url"
+	"regexp"
 	"sort"
 	"strings"
 	"sync"
@@ -48,11 +50,90 @@ func notionOrderJSON(v interface{}, indent string) string {
 	return string(b)
 }
 
-// fakeViews serves /v1/views the way the views guide describes. filter and
-// sorts are replaced on update (null clears them). quick_filters and
-// configuration are merged per top-level key, and a key set to null is
-// removed. Notion returns null for anything not set. Responses use their
-// own key order and whitespace.
+// fakeSchema is the data source the fake views belong to, keyed by property
+// name. The data source endpoint returns IDs URL-escaped, and views return
+// them unescaped, as Notion does.
+var fakeSchema = map[string]string{"Name": "title", "Priority": "sFqA", "Done": "b%3Ax"}
+
+func fakePropID(ref string) string {
+	if id, ok := fakeSchema[ref]; ok {
+		ref = id
+	}
+	if un, err := url.PathUnescape(ref); err == nil {
+		return un
+	}
+	return ref
+}
+
+// toNotionRefs rewrites property names to IDs the way Notion stores a
+// view: "property" and "property_id" values at any depth, and with keys set
+// the top-level keys (quick filters).
+func toNotionRefs(v interface{}, keys bool) interface{} {
+	switch t := v.(type) {
+	case map[string]interface{}:
+		out := map[string]interface{}{}
+		for k, val := range t {
+			if s, ok := val.(string); ok && (k == "property" || k == "property_id") {
+				out[k] = fakePropID(s)
+				continue
+			}
+			if keys {
+				k = fakePropID(k)
+			}
+			out[k] = toNotionRefs(val, false)
+		}
+		return out
+	case []interface{}:
+		out := make([]interface{}, len(t))
+		for i, e := range t {
+			out[i] = toNotionRefs(e, false)
+		}
+		return out
+	}
+	return v
+}
+
+// expandTableProperties lists every schema property in a table
+// configuration, with property_name, the way Notion answers.
+func expandTableProperties(cfg interface{}) interface{} {
+	m, ok := cfg.(map[string]interface{})
+	if !ok || m["properties"] == nil {
+		return cfg
+	}
+	seen := map[string]bool{}
+	var out []interface{}
+	names := map[string]string{}
+	for name := range fakeSchema {
+		names[fakePropID(name)] = name
+	}
+	for _, e := range m["properties"].([]interface{}) {
+		pm := e.(map[string]interface{})
+		id := pm["property_id"].(string)
+		seen[id] = true
+		pm["property_name"] = names[id]
+		out = append(out, pm)
+	}
+	ids := make([]string, 0, len(names))
+	for id := range names {
+		ids = append(ids, id)
+	}
+	sort.Strings(ids)
+	for _, id := range ids {
+		if !seen[id] {
+			out = append(out, map[string]interface{}{"property_id": id, "property_name": names[id], "visible": false})
+		}
+	}
+	m["properties"] = out
+	return m
+}
+
+// fakeViews serves /v1/views the way the views guide describes, plus what
+// the real API does that the guide doesn't say. filter and sorts are
+// replaced on update (null clears them). quick_filters and configuration
+// are merged per top-level key, and a key set to null is removed. Notion
+// returns null for anything not set. Property names come back as IDs, and a
+// table configuration lists every property. Responses use their own key
+// order and whitespace. GET /v1/data_sources/{id} returns fakeSchema.
 type fakeViews struct {
 	mu    sync.Mutex
 	next  int
@@ -104,8 +185,22 @@ func (f *fakeViews) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		_, _ = w.Write([]byte(notionOrderJSON(v, "")))
 	}
 	id := normalizeID(strings.TrimPrefix(r.URL.Path, "/v1/views/"))
+	for _, k := range []string{"filter", "sorts", "configuration"} {
+		if body[k] != nil {
+			body[k] = toNotionRefs(body[k], false)
+		}
+	}
+	if body["quick_filters"] != nil {
+		body["quick_filters"] = toNotionRefs(body["quick_filters"], true)
+	}
 
 	switch {
+	case r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/v1/data_sources/"):
+		props := map[string]interface{}{}
+		for name, pid := range fakeSchema {
+			props[name] = map[string]interface{}{"id": pid, "name": name}
+		}
+		reply(200, map[string]interface{}{"object": "data_source", "id": strings.TrimPrefix(r.URL.Path, "/v1/data_sources/"), "properties": props})
 	case r.Method == http.MethodPost && r.URL.Path == "/v1/views":
 		f.next++
 		newID := fmt.Sprintf("%032d", f.next+700)
@@ -119,6 +214,7 @@ func (f *fakeViews) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			"created_by": map[string]interface{}{"object": "user", "id": "e7f3a4b2-1234-5678-9abc-def012345678"},
 			"url":        "https://www.notion.so/db?v=" + newID,
 		}
+		v["configuration"] = expandTableProperties(v["configuration"])
 		f.views[newID] = v
 		reply(200, v)
 	case r.Method == http.MethodPatch && f.views[id] != nil:
@@ -138,6 +234,7 @@ func (f *fakeViews) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 				}
 			}
 		}
+		v["configuration"] = expandTableProperties(v["configuration"])
 		reply(200, v)
 	case r.Method == http.MethodGet && f.views[id] != nil:
 		reply(200, f.views[id])
@@ -181,7 +278,7 @@ resource "notion_view" "v" {
 
   # Written by hand with odd spacing. The stored value must be this string.
   sorts = <<-EOT
-    [ { "direction": "descending", "timestamp": "created_time" },
+    [ { "direction": "descending", "property": "Priority" },
       { "property": "Name",  "direction": "ascending" } ]
   EOT
 
@@ -198,7 +295,7 @@ resource "notion_view" "v" {
 `, s.priority, s.quickFilters, wrap)
 }
 
-const viewSortsHeredoc = `[ { "direction": "descending", "timestamp": "created_time" },
+const viewSortsHeredoc = `[ { "direction": "descending", "property": "Priority" },
   { "property": "Name",  "direction": "ascending" } ]
 `
 
@@ -211,7 +308,7 @@ const viewSortsHeredoc = `[ { "direction": "descending", "timestamp": "created_t
 func TestUnitViewJSONAttributes_RoundTrip(t *testing.T) {
 	f := newFakeViews(t)
 	const addr = "notion_view.v"
-	twoQuick := `{ title = {}, "%3AUPp" = { select = { equals = "High" } } }`
+	twoQuick := `{ title = {}, "b%3Ax" = { checkbox = { equals = true } } }`
 	oneQuick := `{ title = {} }`
 	resource.UnitTest(t, resource.TestCase{
 		ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
@@ -258,7 +355,9 @@ func TestUnitViewJSONAttributes_RoundTrip(t *testing.T) {
 				ImportStateVerify: true,
 				// Notion still has wrap_cells from step 1, which the config
 				// no longer sets, and the sorts string was written by hand.
-				ImportStateVerifyIgnore: []string{"configuration", "sorts"},
+				// Import has no config to compare with, so the filter keeps
+				// Notion's property IDs where the config named properties.
+				ImportStateVerifyIgnore: []string{"configuration", "sorts", "filter"},
 			},
 		},
 	})
@@ -314,27 +413,27 @@ func TestViewJSONReadback(t *testing.T) {
 }`)
 	canonical := `{"properties":[{"property_id":"title","visible":true,"width":320}],"type":"table","wrap_cells":true}`
 	cases := []struct {
-		name   string
-		prior  types.String
-		raw    json.RawMessage
-		merged bool
-		want   string
+		name  string
+		prior types.String
+		raw   json.RawMessage
+		kind  viewJSONKind
+		want  string
 	}{
-		{"same value, other order", types.StringValue(`{"properties":[{"property_id":"title","visible":true,"width":320}],"type":"table","wrap_cells":true}`), notion, false, "keep"},
-		{"merged key ignored for configuration", types.StringValue(`{"type":"table","properties":[{"property_id":"title","visible":true,"width":320}]}`), notion, true, "keep"},
-		{"merged key is drift elsewhere", types.StringValue(`{"type":"table","properties":[{"property_id":"title","visible":true,"width":320}]}`), notion, false, canonical},
-		{"configured key changed", types.StringValue(`{"type":"table","wrap_cells":false,"properties":[{"property_id":"title","visible":true,"width":320}]}`), notion, true, canonical},
-		{"nested change", types.StringValue(`{"type":"table","properties":[{"property_id":"title","visible":true,"width":300}]}`), notion, true, canonical},
-		{"configured null, absent in Notion", types.StringValue(`{"type":"table","group_by":null,"wrap_cells":true,"properties":[{"property_id":"title","visible":true,"width":320}]}`), notion, true, "keep"},
-		{"import", types.StringNull(), notion, true, canonical},
-		{"unknown on create", types.StringUnknown(), notion, true, canonical},
-		{"unset", types.StringValue(""), json.RawMessage(`null`), false, ""},
-		{"empty sorts", types.StringValue("[]"), nil, false, "keep"},
-		{"cleared with jsonencode(null)", types.StringValue("null"), json.RawMessage(`null`), false, "keep"},
-		{"cleared in Notion", types.StringValue(`[{"timestamp":"created_time","direction":"ascending"}]`), json.RawMessage(`null`), false, ""},
+		{"same value, other order", types.StringValue(`{"properties":[{"property_id":"title","visible":true,"width":320}],"type":"table","wrap_cells":true}`), notion, viewJSONFilter, "keep"},
+		{"merged key ignored for configuration", types.StringValue(`{"type":"table","properties":[{"property_id":"title","visible":true,"width":320}]}`), notion, viewJSONConfiguration, "keep"},
+		{"merged key is drift elsewhere", types.StringValue(`{"type":"table","properties":[{"property_id":"title","visible":true,"width":320}]}`), notion, viewJSONFilter, canonical},
+		{"configured key changed", types.StringValue(`{"type":"table","wrap_cells":false,"properties":[{"property_id":"title","visible":true,"width":320}]}`), notion, viewJSONConfiguration, canonical},
+		{"nested change", types.StringValue(`{"type":"table","properties":[{"property_id":"title","visible":true,"width":300}]}`), notion, viewJSONConfiguration, canonical},
+		{"configured null, absent in Notion", types.StringValue(`{"type":"table","group_by":null,"wrap_cells":true,"properties":[{"property_id":"title","visible":true,"width":320}]}`), notion, viewJSONConfiguration, "keep"},
+		{"import", types.StringNull(), notion, viewJSONConfiguration, canonical},
+		{"unknown on create", types.StringUnknown(), notion, viewJSONConfiguration, canonical},
+		{"unset", types.StringValue(""), json.RawMessage(`null`), viewJSONSorts, ""},
+		{"empty sorts", types.StringValue("[]"), nil, viewJSONSorts, "keep"},
+		{"cleared with jsonencode(null)", types.StringValue("null"), json.RawMessage(`null`), viewJSONSorts, "keep"},
+		{"cleared in Notion", types.StringValue(`[{"timestamp":"created_time","direction":"ascending"}]`), json.RawMessage(`null`), viewJSONSorts, ""},
 	}
 	for _, c := range cases {
-		got := viewJSONReadback(c.prior, c.raw, c.merged)
+		got := viewJSONReadback(c.prior, c.raw, c.kind, nil)
 		want := c.want
 		if want == "keep" {
 			want = c.prior.ValueString()
@@ -345,8 +444,67 @@ func TestViewJSONReadback(t *testing.T) {
 	}
 }
 
+// Notion answers with property IDs where the config named properties, and
+// lists every property in a table configuration with property_name. With
+// the data source's names and IDs, those still match the config.
+func TestViewJSONReadback_PropertyRefs(t *testing.T) {
+	refs := newViewPropertyRefs(map[string]struct {
+		ID string `json:"id"`
+	}{"Name": {ID: "title"}, "Priority": {ID: "sFqA"}, "Done": {ID: "b%3Ax"}})
+	cases := []struct {
+		name  string
+		prior string
+		raw   string
+		kind  viewJSONKind
+		keep  bool
+	}{
+		{"filter by name", `{"property":"Priority","select":{"equals":"High"}}`, `{"property":"sFqA","select":{"equals":"High"}}`, viewJSONFilter, true},
+		{"compound filter, escaped ID", `{"and":[{"property":"Done","checkbox":{"equals":false}}]}`, `{"and":[{"property":"b:x","checkbox":{"equals":false}}]}`, viewJSONFilter, true},
+		{"filter value changed", `{"property":"Priority","select":{"equals":"High"}}`, `{"property":"sFqA","select":{"equals":"Low"}}`, viewJSONFilter, false},
+		{"sorts by title name", `[{"property":"Name","direction":"ascending"}]`, `[{"direction":"ascending","property":"title"}]`, viewJSONSorts, true},
+		{"sort dropped", `[{"property":"Name","direction":"ascending"},{"property":"Priority","direction":"descending"}]`, `[{"direction":"ascending","property":"title"}]`, viewJSONSorts, false},
+		{"quick filter key by name", `{"Priority":{"select":{"equals":"High"}}}`, `{"sFqA":{"select":{"equals":"High"}}}`, viewJSONQuickFilters, true},
+		{"table configuration lists every property",
+			`{"type":"table","properties":[{"property_id":"title","visible":true,"width":320}],"wrap_cells":true}`,
+			`{"properties":[{"property_id":"title","property_name":"Name","visible":true,"width":320},{"property_id":"sFqA","property_name":"Priority","visible":false}],"type":"table","wrap_cells":true}`,
+			viewJSONConfiguration, true},
+		{"configured property by name", `{"type":"table","properties":[{"property_id":"Priority","visible":true}]}`,
+			`{"properties":[{"property_id":"title","visible":true},{"property_id":"sFqA","property_name":"Priority","visible":true}],"type":"table"}`,
+			viewJSONConfiguration, true},
+		{"configured property changed", `{"type":"table","properties":[{"property_id":"Priority","visible":true}]}`,
+			`{"properties":[{"property_id":"sFqA","property_name":"Priority","visible":false}],"type":"table"}`,
+			viewJSONConfiguration, false},
+		{"configured property missing", `{"type":"table","properties":[{"property_id":"Gone","visible":true}]}`,
+			`{"properties":[{"property_id":"title","visible":true}],"type":"table"}`,
+			viewJSONConfiguration, false},
+	}
+	for _, c := range cases {
+		got := viewJSONReadback(types.StringValue(c.prior), json.RawMessage(c.raw), c.kind, refs)
+		if kept := got.ValueString() == c.prior; kept != c.keep {
+			t.Errorf("%s: kept = %v, want %v (got %s)", c.name, kept, c.keep, got.ValueString())
+		}
+	}
+	// Without the schema, a name and an ID don't match.
+	got := viewJSONReadback(types.StringValue(`{"property":"Priority","select":{"equals":"High"}}`), json.RawMessage(`{"property":"sFqA","select":{"equals":"High"}}`), viewJSONFilter, nil)
+	if got.ValueString() == `{"property":"Priority","select":{"equals":"High"}}` {
+		t.Errorf("matched a name to an ID without refs")
+	}
+}
+
+func TestTimestampSortError(t *testing.T) {
+	if err := timestampSortError(`[{"property":"Name","direction":"ascending"}]`); err != nil {
+		t.Errorf("property sort rejected: %v", err)
+	}
+	if err := timestampSortError(`[{"property":"Name","direction":"ascending"},{"timestamp":"created_time","direction":"descending"}]`); err == nil || !strings.Contains(err.Error(), "sorts[1]") {
+		t.Errorf("timestamp sort error = %v", err)
+	}
+	if err := timestampSortError(""); err != nil {
+		t.Errorf("empty sorts rejected: %v", err)
+	}
+}
+
 func TestClearRemovedQuickFilters(t *testing.T) {
-	got, err := clearRemovedQuickFilters(json.RawMessage(`{"title":{}}`), types.StringValue(`{"title":{},"abc1":{"select":{"equals":"High"}}}`))
+	got, err := clearRemovedQuickFilters(json.RawMessage(`{"title":{}}`), types.StringValue(`{"title":{},"abc1":{"select":{"equals":"High"}}}`), nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -354,19 +512,52 @@ func TestClearRemovedQuickFilters(t *testing.T) {
 		t.Fatalf("body = %s", got)
 	}
 	same := json.RawMessage(`{"title":{}}`)
-	got, _ = clearRemovedQuickFilters(same, types.StringValue(`{"title":{"title":{"contains":"x"}}}`))
+	got, _ = clearRemovedQuickFilters(same, types.StringValue(`{"title":{"title":{"contains":"x"}}}`), nil)
 	if string(got) != string(same) {
 		t.Fatalf("nothing removed, body = %s", got)
 	}
 	// State holds Notion's ID key, the config names the property. Nulling
 	// the ID could remove the filter being set, so nothing is nulled.
 	byName := json.RawMessage(`{"Status":{"status":{"equals":"Done"}}}`)
-	got, _ = clearRemovedQuickFilters(byName, types.StringValue(`{"%3AUPp":{"status":{"equals":"Done"}}}`))
+	got, _ = clearRemovedQuickFilters(byName, types.StringValue(`{"%3AUPp":{"status":{"equals":"Done"}}}`), nil)
 	if string(got) != string(byName) {
 		t.Fatalf("name in plan, ID in state, body = %s", got)
 	}
-	got, _ = clearRemovedQuickFilters(nil, types.StringValue(`{"title":{}}`))
+	got, _ = clearRemovedQuickFilters(nil, types.StringValue(`{"title":{}}`), nil)
 	if got != nil {
 		t.Fatalf("quick_filters not sent, body = %s", got)
 	}
+	// With the schema, the plan's name and the state's ID are the same
+	// property, so it stays, and the dropped one is nulled by its ID.
+	refs := newViewPropertyRefs(map[string]struct {
+		ID string `json:"id"`
+	}{"Status": {ID: "%3AUPp"}, "Priority": {ID: "sFqA"}})
+	got, _ = clearRemovedQuickFilters(byName, types.StringValue(`{":UPp":{"status":{"equals":"Done"}},"sFqA":{}}`), refs)
+	if string(got) != `{"Status":{"status":{"equals":"Done"}},"sFqA":null}` {
+		t.Fatalf("with refs, body = %s", got)
+	}
+}
+
+// A timestamp sort is refused at plan time, before anything is sent.
+func TestUnitView_TimestampSortRejected(t *testing.T) {
+	resource.UnitTest(t, resource.TestCase{
+		ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
+		Steps: []resource.TestStep{{
+			Config: `
+provider "notion" {
+  token = "secret_unit_view_timestamp_sort"
+}
+
+resource "notion_view" "v" {
+  database_id    = "22222222222222222222222222222222"
+  data_source_id = "33333333333333333333333333333333"
+  name           = "Newest first"
+  type           = "table"
+  sorts          = jsonencode([{ timestamp = "created_time", direction = "descending" }])
+}
+`,
+			PlanOnly:    true,
+			ExpectError: regexp.MustCompile(`Timestamp sort on a view`),
+		}},
+	})
 }

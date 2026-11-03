@@ -28,10 +28,10 @@ resource "notion_view" "open_work" {
   })
 
   sorts = jsonencode([
-    { timestamp = "created_time", direction = "descending" }
+    { property = "Priority", direction = "descending" }
   ])
 
-  # Quick filter keys are property IDs. The title property's ID is "title".
+  # Keys name a property by name or ID. The title property's ID is "title".
   quick_filters = jsonencode({ title = {} })
 
   configuration = jsonencode({
@@ -44,11 +44,13 @@ resource "notion_view" "open_work" {
 
 ## How the JSON attributes read back
 
-Notion returns these values with its own key order and whitespace, and sometimes with more than you sent. The provider keeps the string you configured as long as Notion's value decodes to the same JSON, so formatting never shows as a diff. When the value really differs, for example because someone changed the filter in the Notion app, state holds Notion's value as compact JSON with sorted keys (the same form `jsonencode` produces) and the next plan shows the change. An import stores the same normalized form.
+Notion returns these values with its own key order and whitespace, and with more than you sent. The provider keeps the string you configured as long as Notion's value means the same thing, so none of that shows as a diff. When the value really differs, for example because someone changed the filter in the Notion app, state holds Notion's value as compact JSON with sorted keys (the same form `jsonencode` produces) and the next plan shows the change.
 
-- `configuration` updates are a shallow merge in Notion, so top-level fields you leave out keep whatever value the view had. The provider ignores those extra top-level fields when it compares. Removing a field such as `wrap_cells` from the config doesn't reset it in Notion, so set it explicitly instead. Fields inside a configured value, such as the entries of `properties`, must match exactly.
-- Removing a key from `quick_filters` removes that quick filter from the view. Notion keeps quick filters an update doesn't name, so the provider sends `null` for keys the previous state had and the config dropped. It skips that when the config also adds a key the state doesn't have, in case the two name the same property by name and by ID.
-- Notion resolves property names to property IDs in `quick_filters` keys and in `property_id` fields inside `configuration`. Use property IDs there, or the value Notion returns won't match the config and the apply fails with an inconsistent result. The title property's ID is always `title`.
+- **Property names and IDs.** You can refer to a property by name or by ID in a filter or sort `property`, a `quick_filters` key, and a `property_id` inside `configuration`. Notion stores the ID, so the provider reads the data source's properties (`GET /v1/data_sources/{id}`, one extra request when any of these attributes is set) and compares names and IDs as the same property. The title property's ID is always `title`.
+- **Configuration.** Notion's configuration contains more than the config sets. Updates are a shallow merge, so top-level fields you leave out keep their value, and a table's `properties` list comes back with every property of the data source, each with a read-only `property_name`. The provider compares only what the config sets. Entries in a list with `property_id` are matched by property in any order, and properties you don't list are ignored. Removing a field such as `wrap_cells` from the config doesn't reset it in Notion, so set it explicitly instead.
+- **Timestamp sorts.** Notion accepts a sort on `created_time` or `last_edited_time` for a view but doesn't keep it, so the provider rejects one at plan time. Sort on a created time or last edited time property instead.
+- **Quick filters.** Removing a key from `quick_filters` removes that quick filter from the view. Notion keeps quick filters an update doesn't name, so the provider sends `null` for keys the previous state had and the config dropped, matching names and IDs through the data source.
+- **Import.** An import has no config to compare with, so state holds Notion's values with property IDs. If the config names properties, the first plan after an import shows an update that sends the same filter and sorts again, and plans are clean after that.
 - To clear the filter, sorts, or all quick filters, set the attribute to `jsonencode(null)`, which the views guide documents for updates. Removing the attribute from the config leaves Notion's value in place, because an attribute that isn't configured follows whatever Notion has.
 
 ## Schema
