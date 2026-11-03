@@ -56,6 +56,17 @@ func TestAccDatabaseEntryResourceWithMarkdown(t *testing.T) {
 					resource.TestCheckResourceAttrSet("notion_database_entry.test_md", "id"),
 					resource.TestCheckResourceAttr("notion_database_entry.test_md", "title", "Entry With Content"),
 					resource.TestCheckResourceAttrSet("notion_database_entry.test_md", "markdown"),
+					resource.TestCheckResourceAttr("notion_database_entry.test_md", "select_properties.Stage", "Draft"),
+					resource.TestCheckResourceAttr("notion_database_entry.test_md", "number_properties.Points", "5"),
+				),
+			},
+			{
+				// Read the properties back from Notion. A property the create
+				// dropped would be missing from the refreshed maps.
+				RefreshState: true,
+				Check: resource.ComposeAggregateTestCheckFunc(
+					resource.TestCheckResourceAttr("notion_database_entry.test_md", "select_properties.Stage", "Draft"),
+					resource.TestCheckResourceAttr("notion_database_entry.test_md", "number_properties.Points", "5"),
 				),
 			},
 			{
@@ -91,10 +102,35 @@ resource "notion_database" "test_entry_md_parent" {
   title_column_title = "Name"
 }
 
-resource "notion_database_entry" "test_md" {
+resource "notion_database_property_select" "test_md_stage" {
   database = notion_database.test_entry_md_parent.id
-  title    = %q
-  markdown = %q
+  name     = "Stage"
+  options = {
+    "Draft" = "gray"
+    "Live"  = "green"
+  }
+}
+
+resource "notion_database_property_number" "test_md_points" {
+  database = notion_database.test_entry_md_parent.id
+  name     = "Points"
+  format   = "number"
+}
+
+# Typed properties next to markdown. The create with markdown used to send
+# only the title, which left these unset in Notion and showed a diff on
+# the next plan.
+resource "notion_database_entry" "test_md" {
+  database          = notion_database.test_entry_md_parent.id
+  title             = %q
+  markdown          = %q
+  select_properties = { "Stage" = "Draft" }
+  number_properties = { "Points" = 5 }
+
+  depends_on = [
+    notion_database_property_select.test_md_stage,
+    notion_database_property_number.test_md_points,
+  ]
 }
 `, parentPageID, title, markdown)
 }

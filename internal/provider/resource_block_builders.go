@@ -461,4 +461,16 @@ func readBlockIntoState(block notionapi.Block, state *BlockResourceModel) {
 	case *notionapi.ColumnBlock:
 		// No additional fields
 	}
+	// Attributes this block type doesn't use get their schema defaults, so an
+	// import reads back the same values a create stores. readRawBlockIntoState
+	// does the same for the raw block types.
+	for _, s := range []*types.String{&state.RichText, &state.Color, &state.Icon, &state.Language, &state.Caption, &state.URL, &state.Expression} {
+		setStringDefault(s)
+	}
+	if state.IsToggleable.IsNull() || state.IsToggleable.IsUnknown() {
+		state.IsToggleable = types.BoolValue(false)
+	}
+	if state.Checked.IsNull() || state.Checked.IsUnknown() {
+		state.Checked = types.BoolValue(false)
+	}
 }
