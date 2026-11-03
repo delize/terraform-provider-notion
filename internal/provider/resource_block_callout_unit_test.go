@@ -24,6 +24,9 @@ type fakeCallouts struct {
 	next   int
 	blocks map[string]map[string]interface{}
 	writes []string // "METHOD /path body"
+	// defaultIcon is what a callout created without an icon gets, to
+	// mimic a server-side default such as the app's 💡. nil means none.
+	defaultIcon interface{}
 }
 
 const calloutParentID = "11111111111111111111111111111111"
@@ -127,7 +130,7 @@ func (f *fakeCallouts) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		if icon, ok := callout["icon"]; ok {
 			callout["icon"] = echoIcon(icon)
 		} else {
-			callout["icon"] = nil
+			callout["icon"] = f.defaultIcon
 		}
 		f.next++
 		newID := fmt.Sprintf("%032d", f.next+100)
@@ -391,9 +394,10 @@ func TestUnitBlockCallout_IconTypeChangedIsDrift(t *testing.T) {
 }
 
 // TestUnitBlockCallout_UnconfiguredIcon covers a callout created with no
-// icon that gets one in the Notion app. A native icon isn't tracked, so it
-// plans nothing. An emoji always shows in `icon`, so it plans an update
-// that is refused, since the API can't remove it.
+// icon that gets one in the Notion app. Neither a native icon nor an emoji
+// is tracked, so both plan nothing. Configuring the emoji starts tracking
+// it, and removing it from the config after that is refused, since the API
+// can't remove an icon.
 func TestUnitBlockCallout_UnconfiguredIcon(t *testing.T) {
 	f := newFakeCallouts(t)
 	const addr = "notion_block.c"
@@ -422,18 +426,69 @@ func TestUnitBlockCallout_UnconfiguredIcon(t *testing.T) {
 				PreConfig: func() {
 					f.setIcon(firstCalloutID, map[string]interface{}{"type": "emoji", "emoji": "🔥"})
 				},
-				Config:      calloutConfig(``),
-				ExpectError: regexp.MustCompile(`can't remove a callout icon`),
-			},
-			{
-				Config: calloutConfig(`  icon = "🔥"`),
+				Config: calloutConfig(``),
 				ConfigPlanChecks: resource.ConfigPlanChecks{
 					PreApply: []plancheck.PlanCheck{plancheck.ExpectEmptyPlan()},
 				},
+				Check: resource.TestCheckResourceAttr(addr, "icon", ""),
+			},
+			{
+				Config: calloutConfig(`  icon = "🔥"`),
+				Check:  resource.TestCheckResourceAttr(addr, "icon", "🔥"),
+			},
+			{
+				PreConfig: func() {
+					f.setIcon(firstCalloutID, map[string]interface{}{"type": "emoji", "emoji": "⭐"})
+				},
+				Config: calloutConfig(`  icon = "🔥"`),
+				ConfigPlanChecks: resource.ConfigPlanChecks{
+					PreApply: []plancheck.PlanCheck{plancheck.ExpectResourceAction(addr, plancheck.ResourceActionUpdate)},
+				},
 				Check: resource.TestCheckResourceAttr(addr, "icon", "🔥"),
+			},
+			{
+				Config:      calloutConfig(``),
+				ExpectError: regexp.MustCompile(`can't remove a callout icon`),
 			},
 		},
 	})
+	if strings.Contains(f.writeLog(), `"icon":null`) {
+		t.Errorf("icon null must never be sent:\n%s", f.writeLog())
+	}
+}
+
+// TestUnitBlockCallout_ServerDefaultIcon mimics Notion giving a callout
+// created without an icon a 💡. The create must plan nothing afterwards
+// (the step's post-apply plan check), and an import takes the emoji so the
+// user can write it in the config.
+func TestUnitBlockCallout_ServerDefaultIcon(t *testing.T) {
+	f := newFakeCallouts(t)
+	f.defaultIcon = map[string]interface{}{"type": "emoji", "emoji": "💡"}
+	const addr = "notion_block.c"
+	resource.UnitTest(t, resource.TestCase{
+		ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
+		Steps: []resource.TestStep{
+			{
+				Config: calloutConfig(``),
+				Check:  resource.TestCheckResourceAttr(addr, "icon", ""),
+			},
+			{
+				Config:        calloutConfig(``),
+				ResourceName:  addr,
+				ImportState:   true,
+				ImportStateId: firstCalloutID,
+				ImportStateCheck: func(states []*terraform.InstanceState) error {
+					if got := states[0].Attributes["icon"]; got != "💡" {
+						return fmt.Errorf("imported icon = %q, want the emoji Notion has", got)
+					}
+					return nil
+				},
+			},
+		},
+	})
+	if strings.Contains(f.writeLog(), "PATCH /v1/blocks/"+firstCalloutID+" ") {
+		t.Errorf("the default icon should not cause an update:\n%s", f.writeLog())
+	}
 }
 
 func TestReadRawBlockIntoState_Callout(t *testing.T) {
@@ -458,6 +513,27 @@ func TestReadRawBlockIntoState_Callout(t *testing.T) {
 		if !v.IsNull() {
 			t.Errorf("unconfigured icon attribute became %s", v)
 		}
+	}
+
+	// No icon configured: Notion's emoji isn't tracked.
+	untracked := BlockResourceModel{Icon: types.StringValue(""), RichTextJSON: types.StringNull()}
+	readRawBlockIntoState(b, &untracked)
+	if untracked.Icon.ValueString() != "" {
+		t.Errorf("unconfigured emoji tracked: %q", untracked.Icon.ValueString())
+	}
+
+	// Import: no prior state, so the emoji is taken.
+	imported := BlockResourceModel{RichTextJSON: types.StringNull()}
+	readRawBlockIntoState(b, &imported)
+	if imported.Icon.ValueString() != "💡" {
+		t.Errorf("import should take the emoji: %q", imported.Icon.ValueString())
+	}
+
+	// A configured native icon replaced by an emoji reports the emoji.
+	native := BlockResourceModel{Icon: types.StringValue(""), IconName: types.StringValue("pizza"), RichTextJSON: types.StringNull()}
+	readRawBlockIntoState(b, &native)
+	if native.Icon.ValueString() != "💡" || !native.IconName.IsNull() {
+		t.Errorf("kind change not reported: icon %q, icon_name %s", native.Icon.ValueString(), native.IconName)
 	}
 
 	// A stale emoji in state is cleared when the callout has a native icon.

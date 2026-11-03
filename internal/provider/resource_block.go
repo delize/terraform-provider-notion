@@ -149,7 +149,8 @@ func (r *BlockResource) Schema(_ context.Context, _ resource.SchemaRequest, resp
 				Default:     booldefault.StaticBool(false),
 			},
 			"icon": schema.StringAttribute{
-				Description: "Emoji icon for callout blocks. On a callout it defaults to an empty string, so an emoji set in the Notion UI is removed on the next apply unless it's configured here. " +
+				Description: "Emoji icon for callout blocks. An emoji is only tracked once it's configured, so a callout with no icon in the config ignores the icon Notion shows. " +
+					"Notion's API can't remove a callout icon, so removing a configured icon from the config is an error. " +
 					"Conflicts with icon_name, icon_url, and icon_custom_emoji_id.",
 				Optional: true,
 				Computed: true,

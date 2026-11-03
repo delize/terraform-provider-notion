@@ -271,8 +271,8 @@ func (r *BlockResource) updateRawBlock(ctx context.Context, prior, plan *BlockRe
 // calloutIconRemoval returns the icon attribute the prior state had set
 // when the plan configures no icon, or "" when nothing would be removed.
 // Update a block takes only an icon object, so this is checked before any
-// request. A prior emoji counts even if it was added in the Notion app,
-// since `icon` always reflects the emoji Notion has.
+// request. The prior state only holds an icon that was configured or
+// imported, since reconcileCalloutIcon leaves an unconfigured one out.
 func calloutIconRemoval(prior iconFields, planned map[string]interface{}) string {
 	if planned != nil {
 		return ""
@@ -386,6 +386,7 @@ func deleteBlockRaw(ctx context.Context, token, blockID string) error {
 // when that's what the config had, so the default doesn't read as drift.
 func readRawBlockIntoState(b *rawBlock, state *BlockResourceModel) {
 	priorColor := state.Color
+	priorIcons := state.iconFields()
 	state.ID = types.StringValue(normalizeID(b.ID))
 	state.Type = types.StringValue(b.Type)
 	state.HasChildren = types.BoolValue(b.HasChildren)
@@ -424,13 +425,27 @@ func readRawBlockIntoState(b *rawBlock, state *BlockResourceModel) {
 		}
 		setRichTextState(b.Callout.RichText, state)
 		state.Color = types.StringValue(normalizeBlockColor(b.Callout.Color, priorColor))
-		// Same rule as pages: the emoji `icon` always reflects Notion, so a
-		// changed or removed emoji shows as drift, and the other icon kinds
-		// are only tracked when configured.
-		state.setIconFields(state.iconFields().reconcile(b.Callout.icon()))
+		state.setIconFields(reconcileCalloutIcon(priorIcons, b.Callout.icon()))
 	case "tab":
 		state.RichText = types.StringValue("")
 	}
+}
+
+// reconcileCalloutIcon maps a callout's icon onto the prior state. Each icon
+// kind is tracked only once it's configured, so a callout with no icon in
+// the config never plans a change because of its icon. That matters because
+// the Notion app gives new callouts a 💡, and the API can't remove an icon,
+// so tracking it would plan an update that can only be refused. Once `icon`
+// holds an emoji, a changed or removed emoji shows as drift, as on pages.
+// An import has no prior state (`icon` is null), so it takes Notion's emoji
+// and the user writes that in the config.
+func reconcileCalloutIcon(prior iconFields, p parsedIcon) iconFields {
+	out := prior.reconcile(p)
+	untracked := !prior.Emoji.IsNull() && !prior.Emoji.IsUnknown() && prior.Emoji.ValueString() == "" && !prior.managed()
+	if untracked {
+		out.Emoji = types.StringValue("")
+	}
+	return out
 }
 
 // keepPlannedIcon returns the icon attributes to save after a create or

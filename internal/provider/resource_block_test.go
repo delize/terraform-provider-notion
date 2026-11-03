@@ -1,12 +1,14 @@
 package provider
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"regexp"
 	"testing"
 
 	"github.com/hashicorp/terraform-plugin-testing/helper/resource"
+	"github.com/hashicorp/terraform-plugin-testing/terraform"
 )
 
 // TestAccBlockHeading4AndTabs covers heading_4 (2026-03-30) and tab blocks
@@ -254,6 +256,42 @@ func TestAccBlockCalloutIcons(t *testing.T) {
 				Check: resource.ComposeAggregateTestCheckFunc(
 					resource.TestCheckResourceAttr(addr, "icon", "💡"),
 					resource.TestCheckResourceAttr(addr, "color", ""),
+				),
+			},
+		},
+	})
+}
+
+// TestAccBlockCalloutNoIcon creates a callout with no icon attribute at all.
+// The step's post-apply plan check proves it plans nothing afterwards,
+// whatever default icon Notion gives it. The icon Notion reports is logged,
+// so the run shows whether the API adds a default.
+func TestAccBlockCalloutNoIcon(t *testing.T) {
+	token := os.Getenv("NOTION_TOKEN")
+	if token == "" {
+		t.Skip("NOTION_TOKEN not set")
+	}
+	parentID := makeIsolatedParentPage(t, notionTestClient(t), "callout-no-icon")
+
+	const addr = "notion_block.callout"
+	resource.Test(t, resource.TestCase{
+		ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
+		Steps: []resource.TestStep{
+			{
+				Config: testAccBlockCalloutConfig(parentID, ""),
+				Check: resource.ComposeAggregateTestCheckFunc(
+					resource.TestCheckResourceAttr(addr, "icon", ""),
+					resource.TestCheckNoResourceAttr(addr, "icon_name"),
+					logAttr(t, addr, "icon"),
+					func(s *terraform.State) error {
+						id := s.RootModule().Resources[addr].Primary.ID
+						b, err := getBlockRaw(context.Background(), token, id)
+						if err != nil {
+							return err
+						}
+						t.Logf("Notion reports this icon on a callout created without one: %+v (raw %s)", b.Callout.icon(), string(b.Callout.Icon))
+						return nil
+					},
 				),
 			},
 		},

@@ -76,7 +76,13 @@ resource "notion_block" "tip" {
 }
 ```
 
-Notion's API can set or change a callout icon but can't remove it. If the callout has an icon and the config sets none, the apply fails before anything is sent. Remove the icon in the Notion app first, then from the config, or configure a different icon. The emoji `icon` always reflects Notion, so an emoji added in the Notion app to a callout with no icon configured also hits this error until it's configured or removed in the app. The other icon kinds are only tracked when configured, so a native icon added in the app to a callout with no icon configured is left alone. An empty `color` is sent as `default`.
+Each icon kind is only tracked once it's configured. A callout with no icon attribute in the config ignores whatever icon Notion shows, such as the 💡 the Notion app gives new callouts, so it never plans a change because of its icon. Once an icon is configured, a change made in the Notion app shows as drift and the next apply puts the configured icon back.
+
+Notion's API can set or change a callout icon but can't remove it. Removing a configured icon from the config fails before anything is sent. Remove the icon in the Notion app first, then from the config, or configure a different icon.
+
+Importing a callout takes the emoji Notion has into `icon`, so write that emoji in the config. If the imported callout has an emoji and the config leaves `icon` out, the next apply counts it as removing the icon and fails as above.
+
+An empty `color` is sent as `default`.
 
 ### Markdown Links
 
@@ -180,7 +186,7 @@ Tabs are matched by position. Changing a label or icon updates that tab in place
 - `color` (String) Block color: `default`, `gray`, `brown`, `orange`, `yellow`, `green`, `blue`, `purple`, `pink`, `red`, or one of the `_background` variants such as `default_background` or `blue_background`. Leave it unset for Notion's default color. Notion reports an unset color as `default`, which reads back as `""` so it doesn't show as a diff, and an import of an uncolored block reads `""` too. Removing `color` from the config resets the block to `default`.
 - `is_toggleable` (Boolean) Whether a heading block (`heading_1` to `heading_4`) is toggleable.
 - `checked` (Boolean) Whether a to-do block is checked.
-- `icon` (String) Emoji icon for callout blocks. Conflicts with `icon_name`, `icon_url`, and `icon_custom_emoji_id`.
+- `icon` (String) Emoji icon for callout blocks. Only tracked once configured, and removing a configured icon is an error because the API can't remove it. Conflicts with `icon_name`, `icon_url`, and `icon_custom_emoji_id`.
 - `icon_name` (String) Native Notion icon name for a callout, such as `pizza` (2026-03-25). Notion returns its internal icon name, so use that rather than a picker alias to avoid a diff. Only valid when `type` is `callout`.
 - `icon_color` (String) Color of the native icon set with `icon_name`: `gray`, `lightgray`, `brown`, `yellow`, `orange`, `green`, `blue`, `purple`, `pink`, or `red`. Notion defaults to `gray`. Only valid when `type` is `callout`.
 - `icon_url` (String) External image URL for a callout icon. URLs from Notion's own icon set are rejected, use `icon_name` for those. Only valid when `type` is `callout`.
