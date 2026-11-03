@@ -57,7 +57,36 @@ func (f *fakeTabBlocks) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	rest := strings.TrimPrefix(r.URL.Path, "/v1/blocks/")
 	id, sub, _ := strings.Cut(rest, "/")
 
+	plainText := func(p map[string]interface{}) {
+		for _, rt := range p["rich_text"].([]interface{}) {
+			rt := rt.(map[string]interface{})
+			rt["plain_text"] = rt["text"].(map[string]interface{})["content"]
+		}
+	}
 	switch {
+	case r.Method == http.MethodPatch && sub == "children" && f.blocks[id] != nil:
+		// Appending tab items to an existing tab.
+		var out []interface{}
+		for _, c := range body["children"].([]interface{}) {
+			p := c.(map[string]interface{})["paragraph"].(map[string]interface{})
+			plainText(p)
+			kid := map[string]interface{}{
+				"object": "block", "id": f.id(), "type": "paragraph", "paragraph": p,
+				"parent": map[string]string{"type": "block_id", "block_id": id},
+			}
+			f.children[id] = append(f.children[id], kid)
+			f.blocks[kid["id"].(string)] = kid
+			out = append(out, kid)
+		}
+		reply(200, map[string]interface{}{"results": out})
+	case r.Method == http.MethodPatch && sub == "" && f.blocks[id] != nil:
+		// Updating a tab item's label or icon.
+		blk := f.blocks[id]
+		if p, ok := body["paragraph"].(map[string]interface{}); ok {
+			plainText(p)
+			blk["paragraph"] = p
+		}
+		reply(200, blk)
 	case r.Method == http.MethodPatch && sub == "children":
 		in := body["children"].([]interface{})[0].(map[string]interface{})
 		tabID := f.id()
@@ -70,10 +99,12 @@ func (f *fakeTabBlocks) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 				rt := rt.(map[string]interface{})
 				rt["plain_text"] = rt["text"].(map[string]interface{})["content"]
 			}
-			kids = append(kids, map[string]interface{}{
+			kid := map[string]interface{}{
 				"object": "block", "id": f.id(), "type": "paragraph", "paragraph": p,
 				"parent": map[string]string{"type": "block_id", "block_id": tabID},
-			})
+			}
+			kids = append(kids, kid)
+			f.blocks[kid["id"].(string)] = kid
 		}
 		block := map[string]interface{}{
 			"object": "block", "id": tabID, "type": "tab", "has_children": true,
@@ -142,4 +173,26 @@ func TestUnitBlockTab_CreateItemReadFailureKeepsState(t *testing.T) {
 	if f.created != 2 || f.deleted != 2 {
 		t.Fatalf("created %d tabs and deleted %d, want the tainted first tab replaced (2 created, both deleted by the end)", f.created, f.deleted)
 	}
+}
+
+// A tab item added on update gets its id from Notion. The plan must leave
+// that id unknown, not copy a null from the missing prior element.
+func TestUnitBlockTab_AddItemOnUpdate(t *testing.T) {
+	newFakeTabBlocks(t)
+	threeTabs := strings.Replace(tabCreateConfig, `    { label = "Details", icon = "📎" },`,
+		`    { label = "Details", icon = "📎" },
+    { label = "Notes", icon = "📝" },`, 1)
+	resource.UnitTest(t, resource.TestCase{
+		ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
+		Steps: []resource.TestStep{
+			{Config: tabCreateConfig},
+			{
+				Config: threeTabs,
+				Check: resource.ComposeAggregateTestCheckFunc(
+					resource.TestCheckResourceAttr("notion_block.t", "tab_items.#", "3"),
+					resource.TestCheckResourceAttrSet("notion_block.t", "tab_items.2.id"),
+				),
+			},
+		},
+	})
 }

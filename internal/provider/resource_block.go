@@ -177,8 +177,10 @@ func (r *BlockResource) Schema(_ context.Context, _ resource.SchemaRequest, resp
 						"id": schema.StringAttribute{
 							Description: "Block ID of the tab item. Use it as parent_id for the tab's content.",
 							Computed:    true,
+							// UseStateForUnknown would copy a null into an item added
+							// at the end, since that position has no prior state.
 							PlanModifiers: []planmodifier.String{
-								stringplanmodifier.UseStateForUnknown(),
+								stringplanmodifier.UseNonNullStateForUnknown(),
 							},
 						},
 						"label": schema.StringAttribute{
