@@ -96,14 +96,12 @@ func heading4Body(rt []notionapi.RichText, color string, toggleable bool) map[st
 }
 
 // calloutBody builds the callout payload for create and update. icon is the
-// request object from iconFields.request, or nil. With no icon and clearIcon
-// set it sends `"icon": null` to remove the current icon. The Update a block
-// schema doesn't list null for a callout icon, but the response schema
-// allows a null icon and page icons are removed the same way, so this is
-// the conservative choice. An empty color is sent as "default", so removing
-// color from the config resets it and a new callout doesn't pick up some
-// other server default.
-func calloutBody(rt []notionapi.RichText, color string, icon map[string]interface{}, clearIcon bool) map[string]interface{} {
+// request object from iconFields.request, or nil to leave the icon alone.
+// Update a block only accepts an icon object, never null, so an icon can be
+// set or changed through the API but not removed. See calloutIconRemoval.
+// An empty color is sent as "default", so removing color from the config
+// resets it and a new callout doesn't pick up some other server default.
+func calloutBody(rt []notionapi.RichText, color string, icon map[string]interface{}) map[string]interface{} {
 	if color == "" {
 		color = "default"
 	}
@@ -111,11 +109,8 @@ func calloutBody(rt []notionapi.RichText, color string, icon map[string]interfac
 		"rich_text": richTextOrEmpty(rt),
 		"color":     color,
 	}
-	switch {
-	case icon != nil:
+	if icon != nil {
 		body["icon"] = icon
-	case clearIcon:
-		body["icon"] = nil
 	}
 	return body
 }

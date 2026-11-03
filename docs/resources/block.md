@@ -76,7 +76,7 @@ resource "notion_block" "tip" {
 }
 ```
 
-The emoji `icon` defaults to an empty string, so an emoji set on the callout in the Notion app is removed on the next apply unless it's configured. The other icon kinds are only tracked when configured, so a native icon added in the app to a callout with no icon configured is left alone. Removing every icon attribute from the config removes the icon in Notion. An empty `color` is sent as `default`.
+Notion's API can set or change a callout icon but can't remove it. If the callout has an icon and the config sets none, the apply fails before anything is sent. Remove the icon in the Notion app first, then from the config, or configure a different icon. The emoji `icon` always reflects Notion, so an emoji added in the Notion app to a callout with no icon configured also hits this error until it's configured or removed in the app. The other icon kinds are only tracked when configured, so a native icon added in the app to a callout with no icon configured is left alone. An empty `color` is sent as `default`.
 
 ### Markdown Links
 

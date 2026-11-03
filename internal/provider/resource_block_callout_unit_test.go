@@ -179,10 +179,12 @@ resource "notion_block" "c" {
 const firstCalloutID = "00000000000000000000000000000101"
 
 // TestUnitBlockCallout_IconLifecycle creates a callout with a native icon,
-// switches it to an emoji, removes the icon, and imports it.
+// switches it to an emoji, checks that removing the icon is refused before
+// anything is sent, and imports it.
 func TestUnitBlockCallout_IconLifecycle(t *testing.T) {
 	f := newFakeCallouts(t)
 	const addr = "notion_block.c"
+	writesBefore := -1
 	resource.UnitTest(t, resource.TestCase{
 		ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
 		Steps: []resource.TestStep{
@@ -221,28 +223,42 @@ func TestUnitBlockCallout_IconLifecycle(t *testing.T) {
 				),
 			},
 			{
-				Config: calloutConfig(``),
-				Check: resource.ComposeAggregateTestCheckFunc(
-					resource.TestCheckResourceAttr(addr, "icon", ""),
-					func(*terraform.State) error {
-						if !strings.Contains(f.writeLog(), `"icon":null`) {
-							return fmt.Errorf("removing the icon should send null:\n%s", f.writeLog())
-						}
-						if f.icon(firstCalloutID) != nil {
-							return fmt.Errorf("icon still set in Notion: %v", f.icon(firstCalloutID))
-						}
-						return nil
-					},
-				),
+				PreConfig: func() {
+					f.mu.Lock()
+					writesBefore = len(f.writes)
+					f.mu.Unlock()
+				},
+				Config:      calloutConfig(``),
+				ExpectError: regexp.MustCompile(`can't remove a callout icon`),
 			},
 			{
-				Config:            calloutConfig(``),
+				PreConfig: func() {
+					f.mu.Lock()
+					defer f.mu.Unlock()
+					if len(f.writes) != writesBefore {
+						t.Errorf("the refused removal sent requests:\n%s", strings.Join(f.writes[writesBefore:], "\n"))
+					}
+				},
+				Config:            calloutConfig(`  icon = "💡"`),
 				ResourceName:      addr,
 				ImportState:       true,
 				ImportStateVerify: true,
 			},
+			{
+				Config: calloutConfig(`  icon = "💡"`),
+				Check:  resource.TestCheckResourceAttr(addr, "icon", "💡"),
+			},
 		},
 	})
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if strings.Contains(strings.Join(f.writes, "\n"), `"icon":null`) {
+		t.Errorf("icon null must never be sent:\n%s", strings.Join(f.writes, "\n"))
+	}
+	got, _ := json.Marshal(f.blocks[firstCalloutID]["callout"].(map[string]interface{})["icon"])
+	if string(got) != `{"emoji":"💡","type":"emoji"}` {
+		t.Errorf("icon in Notion changed: %s", got)
+	}
 }
 
 // TestUnitBlockCallout_URLAndCustomEmoji covers the other two icon kinds,
@@ -370,7 +386,29 @@ func TestUnitBlockCallout_IconTypeChangedIsDrift(t *testing.T) {
 					resource.TestCheckResourceAttr(addr, "icon", ""),
 				),
 			},
-			{Config: calloutConfig(``)},
+		},
+	})
+}
+
+// TestUnitBlockCallout_UnconfiguredIcon covers a callout created with no
+// icon that gets one in the Notion app. A native icon isn't tracked, so it
+// plans nothing. An emoji always shows in `icon`, so it plans an update
+// that is refused, since the API can't remove it.
+func TestUnitBlockCallout_UnconfiguredIcon(t *testing.T) {
+	f := newFakeCallouts(t)
+	const addr = "notion_block.c"
+	resource.UnitTest(t, resource.TestCase{
+		ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
+		Steps: []resource.TestStep{
+			{
+				Config: calloutConfig(``),
+				Check: func(*terraform.State) error {
+					if strings.Contains(f.writeLog(), `"icon"`) {
+						return fmt.Errorf("no icon should be sent:\n%s", f.writeLog())
+					}
+					return nil
+				},
+			},
 			{
 				PreConfig: func() {
 					f.setIcon(firstCalloutID, map[string]interface{}{"type": "icon", "icon": map[string]interface{}{"name": "token", "color": "gray"}})
@@ -379,6 +417,20 @@ func TestUnitBlockCallout_IconTypeChangedIsDrift(t *testing.T) {
 				ConfigPlanChecks: resource.ConfigPlanChecks{
 					PreApply: []plancheck.PlanCheck{plancheck.ExpectEmptyPlan()},
 				},
+			},
+			{
+				PreConfig: func() {
+					f.setIcon(firstCalloutID, map[string]interface{}{"type": "emoji", "emoji": "🔥"})
+				},
+				Config:      calloutConfig(``),
+				ExpectError: regexp.MustCompile(`can't remove a callout icon`),
+			},
+			{
+				Config: calloutConfig(`  icon = "🔥"`),
+				ConfigPlanChecks: resource.ConfigPlanChecks{
+					PreApply: []plancheck.PlanCheck{plancheck.ExpectEmptyPlan()},
+				},
+				Check: resource.TestCheckResourceAttr(addr, "icon", "🔥"),
 			},
 		},
 	})
@@ -417,18 +469,44 @@ func TestReadRawBlockIntoState_Callout(t *testing.T) {
 }
 
 func TestCalloutBody(t *testing.T) {
-	got := mustJSON(t, calloutBody(plainToRichText("Hi"), "", nil, false))
+	got := mustJSON(t, calloutBody(plainToRichText("Hi"), "", nil))
 	if !strings.Contains(got, `"color":"default"`) || strings.Contains(got, `"icon"`) {
 		t.Errorf("unexpected body: %s", got)
 	}
-	got = mustJSON(t, calloutBody(nil, "red", nil, true))
-	if !strings.Contains(got, `"icon":null`) || !strings.Contains(got, `"rich_text":[]`) || !strings.Contains(got, `"color":"red"`) {
-		t.Errorf("clear body: %s", got)
+	got = mustJSON(t, calloutBody(nil, "red", nil))
+	if strings.Contains(got, `"icon"`) || !strings.Contains(got, `"rich_text":[]`) || !strings.Contains(got, `"color":"red"`) {
+		t.Errorf("no-icon body: %s", got)
 	}
 	icon := iconFields{Emoji: types.StringValue(""), Name: types.StringValue("pizza")}.request()
-	got = mustJSON(t, calloutBody(nil, "", icon, true))
+	got = mustJSON(t, calloutBody(nil, "", icon))
 	if !strings.Contains(got, `"icon":{"icon":{"name":"pizza"},"type":"icon"}`) {
 		t.Errorf("icon body: %s", got)
+	}
+}
+
+func TestCalloutIconRemoval(t *testing.T) {
+	none := iconFields{Emoji: types.StringValue(""), Name: types.StringNull(), Color: types.StringNull(), URL: types.StringNull(), CustomEmojiID: types.StringNull()}
+	emoji, native, url := none, none, none
+	emoji.Emoji = types.StringValue("💡")
+	native.Name = types.StringValue("pizza")
+	url.URL = types.StringValue("https://example.com/i.png")
+	newIcon := map[string]interface{}{"type": "emoji", "emoji": "🔥"}
+
+	for _, c := range []struct {
+		prior   iconFields
+		planned map[string]interface{}
+		want    string
+	}{
+		{none, nil, ""},
+		{emoji, nil, "icon"},
+		{native, nil, "icon_name"},
+		{url, nil, "icon_url"},
+		{emoji, newIcon, ""},
+		{native, newIcon, ""},
+	} {
+		if got := calloutIconRemoval(c.prior, c.planned); got != c.want {
+			t.Errorf("calloutIconRemoval(%+v, %v) = %q, want %q", c.prior, c.planned, got, c.want)
+		}
 	}
 }
 

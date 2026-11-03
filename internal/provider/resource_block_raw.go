@@ -85,7 +85,7 @@ func (r *BlockResource) createRawBlock(ctx context.Context, plan *BlockResourceM
 		block = map[string]interface{}{
 			"object":  "block",
 			"type":    "callout",
-			"callout": calloutBody(rt, plan.Color.ValueString(), plan.iconFields().request(), false),
+			"callout": calloutBody(rt, plan.Color.ValueString(), plan.iconFields().request()),
 		}
 	case "tab":
 		items, diags = tabItemsFromList(ctx, plan.TabItems)
@@ -222,11 +222,14 @@ func (r *BlockResource) updateRawBlock(ctx context.Context, prior, plan *BlockRe
 		}
 		planned := plan.iconFields()
 		icon := planned.request()
-		// Every icon attribute was removed from the config, so clear the
-		// icon the prior state tracked.
-		clearIcon := icon == nil && (prior.Icon.ValueString() != "" || prior.iconFields().managed())
+		if attr := calloutIconRemoval(prior.iconFields(), icon); attr != "" {
+			diags.AddAttributeError(path.Root(attr), "Notion can't remove a callout icon through the API",
+				"The callout has an icon but the config sets none. Notion's API can set or change a callout icon but not remove it. "+
+					"Remove it in the Notion app and then from the config, or configure an icon.")
+			return diags
+		}
 		updated, err := updateBlockRaw(ctx, token, plan.ID.ValueString(), map[string]interface{}{
-			"callout": calloutBody(rt, plan.Color.ValueString(), icon, clearIcon),
+			"callout": calloutBody(rt, plan.Color.ValueString(), icon),
 		})
 		if err != nil {
 			diags.AddError("Error updating block", err.Error())
@@ -263,6 +266,28 @@ func (r *BlockResource) updateRawBlock(ctx context.Context, prior, plan *BlockRe
 		plan.HasChildren = types.BoolValue(true)
 	}
 	return diags
+}
+
+// calloutIconRemoval returns the icon attribute the prior state had set
+// when the plan configures no icon, or "" when nothing would be removed.
+// Update a block takes only an icon object, so this is checked before any
+// request. A prior emoji counts even if it was added in the Notion app,
+// since `icon` always reflects the emoji Notion has.
+func calloutIconRemoval(prior iconFields, planned map[string]interface{}) string {
+	if planned != nil {
+		return ""
+	}
+	switch {
+	case setString(prior.Emoji):
+		return "icon"
+	case setString(prior.Name):
+		return "icon_name"
+	case setString(prior.URL):
+		return "icon_url"
+	case setString(prior.CustomEmojiID):
+		return "icon_custom_emoji_id"
+	}
+	return ""
 }
 
 // tabIconRemovals returns the labels of tabs whose icon the plan removes.

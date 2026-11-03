@@ -199,9 +199,10 @@ resource "notion_block" "explicit" {
 }
 
 // TestAccBlockCalloutIcons walks a callout through a native icon
-// (2026-03-25), then an emoji with a color, then no icon or color at all
-// (which must clear both), and imports it. The callout sits in an isolated
-// page that cleanup trashes.
+// (2026-03-25), then an emoji with a color, then checks that removing the
+// icon is refused (the API can't), then imports it, then clears the color
+// while keeping the emoji. The callout sits in an isolated page that
+// cleanup trashes.
 func TestAccBlockCalloutIcons(t *testing.T) {
 	if os.Getenv("NOTION_TOKEN") == "" {
 		t.Skip("NOTION_TOKEN not set")
@@ -237,16 +238,23 @@ func TestAccBlockCalloutIcons(t *testing.T) {
 				),
 			},
 			{
-				Config: testAccBlockCalloutConfig(parentID, ""),
-				Check: resource.ComposeAggregateTestCheckFunc(
-					resource.TestCheckResourceAttr(addr, "icon", ""),
-					resource.TestCheckResourceAttr(addr, "color", ""),
-				),
+				// Update a block takes only an icon object, so removing the
+				// icon is refused before anything is sent.
+				Config:      testAccBlockCalloutConfig(parentID, ""),
+				ExpectError: regexp.MustCompile(`can't remove a callout icon`),
 			},
 			{
+				Config:            testAccBlockCalloutConfig(parentID, `  icon = "💡"`),
 				ResourceName:      addr,
 				ImportState:       true,
 				ImportStateVerify: true,
+			},
+			{
+				Config: testAccBlockCalloutConfig(parentID, `  icon = "💡"`),
+				Check: resource.ComposeAggregateTestCheckFunc(
+					resource.TestCheckResourceAttr(addr, "icon", "💡"),
+					resource.TestCheckResourceAttr(addr, "color", ""),
+				),
 			},
 		},
 	})
