@@ -187,7 +187,7 @@ func (r *BlockResource) updateRawBlock(ctx context.Context, prior, plan *BlockRe
 			return diags
 		}
 		updated, err := updateBlockRaw(ctx, token, plan.ID.ValueString(), map[string]interface{}{
-			"heading_4": heading4Body(rt, plan.Color.ValueString(), plan.IsToggleable.ValueBool()),
+			"heading_4": heading4Body(rt, blockColorForUpdate(plan.Color), plan.IsToggleable.ValueBool()),
 		})
 		if err != nil {
 			diags.AddError("Error updating block", err.Error())
@@ -371,4 +371,14 @@ func normalizeBlockColor(apiColor string, prior types.String) string {
 		return ""
 	}
 	return apiColor
+}
+
+// blockColorForUpdate is the color sent on an update. An empty color is
+// sent as "default", since the SDK omits an empty color and Notion would
+// then keep a color the config no longer sets.
+func blockColorForUpdate(c types.String) string {
+	if c.IsNull() || c.IsUnknown() || c.ValueString() == "" {
+		return "default"
+	}
+	return c.ValueString()
 }

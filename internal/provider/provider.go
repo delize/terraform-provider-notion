@@ -10,6 +10,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/provider"
 	"github.com/hashicorp/terraform-plugin-framework/provider/schema"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
+	"github.com/hashicorp/terraform-plugin-framework/schema/validator"
 	"github.com/hashicorp/terraform-plugin-framework/types"
 	"github.com/jomei/notionapi"
 )
@@ -26,6 +27,7 @@ type NotionProvider struct {
 type NotionProviderModel struct {
 	Token               types.String `tfsdk:"token"`
 	SilentNotifications types.Bool   `tfsdk:"silent_notifications"`
+	MarkdownVersion     types.String `tfsdk:"markdown_version"`
 	AdminToken          types.String `tfsdk:"admin_token"`
 }
 
@@ -55,6 +57,15 @@ func (p *NotionProvider) Schema(_ context.Context, _ provider.SchemaRequest, res
 				Description: "Create and update pages without sending Notion notifications. Skips page update, @mention, and Person property notifications. " +
 					"Database automations, reminders, and webhooks still run. Defaults to false.",
 				Optional: true,
+			},
+			"markdown_version": schema.StringAttribute{
+				Description: "Default markdown syntax for page and database entry markdown: `v2` (Notion-flavored Markdown) or `v1` (enhanced markdown, deprecated by Notion). " +
+					"A resource's own markdown_version overrides it. When unset, the field is left out of requests and Notion uses v1 on the API version this provider sends. " +
+					"Comments are not covered yet.",
+				Optional: true,
+				Validators: []validator.String{
+					MarkdownVersionValidator(),
+				},
 			},
 			"admin_token": schema.StringAttribute{
 				Description: "Notion Admin API organization bot token, used only by the Admin API resources and data sources " +
@@ -114,6 +125,9 @@ func (p *NotionProvider) Configure(ctx context.Context, req provider.ConfigureRe
 	)
 	registerClientToken(client, token)
 	registerHTTPClient(token, httpClient)
+	// markdown_version reaches the markdown client through a token-keyed
+	// registry, like the HTTP client above.
+	registerMarkdownVersion(token, config.MarkdownVersion.ValueString())
 	registerAdminToken(client, adminToken)
 
 	resp.ResourceData = client

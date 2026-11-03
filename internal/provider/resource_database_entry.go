@@ -19,6 +19,7 @@ import (
 var (
 	_ resource.Resource                = &DatabaseEntryResource{}
 	_ resource.ResourceWithImportState = &DatabaseEntryResource{}
+	_ resource.ResourceWithModifyPlan  = &DatabaseEntryResource{}
 )
 
 type DatabaseEntryResource struct {
@@ -32,6 +33,7 @@ type DatabaseEntryResourceModel struct {
 	Title                 types.String `tfsdk:"title"`
 	URL                   types.String `tfsdk:"url"`
 	Markdown              types.String `tfsdk:"markdown"`
+	MarkdownVersion       types.String `tfsdk:"markdown_version"`
 	RichTextProperties    types.Map    `tfsdk:"rich_text_properties"`
 	NumberProperties      types.Map    `tfsdk:"number_properties"`
 	CheckboxProperties    types.Map    `tfsdk:"checkbox_properties"`
@@ -81,10 +83,11 @@ func (r *DatabaseEntryResource) Schema(_ context.Context, _ resource.SchemaReque
 				},
 			},
 			"markdown": schema.StringAttribute{
-				Description: "Entry page body content as enhanced markdown. " +
+				Description: "Entry page body content as markdown in the syntax set by markdown_version. Sent again only when it or the version changes. " +
 					"Note: Notion may normalize the markdown content, so the stored value may differ slightly from what was submitted.",
 				Optional: true,
 			},
+			"markdown_version": markdownVersionResourceAttribute(),
 			"rich_text_properties": schema.MapAttribute{
 				Description: "Map of rich text property name to string value.",
 				Optional:    true,
@@ -183,19 +186,28 @@ func (r *DatabaseEntryResource) Create(ctx context.Context, req resource.CreateR
 }
 
 func (r *DatabaseEntryResource) createWithMarkdown(ctx context.Context, plan *DatabaseEntryResourceModel, titlePropName string, resp *resource.CreateResponse) {
-	// Build properties as raw JSON-compatible map for the markdown client
-	props := make(map[string]interface{})
-	props[titlePropName] = map[string]interface{}{
-		"type": "title",
-		"title": []map[string]interface{}{
-			{"type": "text", "text": map[string]string{"content": plan.Title.ValueString()}},
-		},
+	// Send the same properties as the plain create path. POST /v1/pages
+	// takes `properties` next to `markdown`, which is exclusive only with
+	// `children`. This path used to send just the title, so typed property
+	// maps were dropped until the next update.
+	entryProps := buildEntryProperties(ctx, plan, &resp.Diagnostics)
+	if resp.Diagnostics.HasError() {
+		return
+	}
+	entryProps[titlePropName] = notionapi.TitleProperty{
+		Type:  notionapi.PropertyTypeTitle,
+		Title: plainToRichText(plan.Title.ValueString()),
+	}
+	props := make(map[string]interface{}, len(entryProps))
+	for name, p := range entryProps {
+		props[name] = p
 	}
 
-	pageID, pageURL, err := r.mdClient.CreateDatabaseEntryWithMarkdown(
+	created, err := r.mdClient.CreateDatabaseEntryWithMarkdown(
 		ctx,
 		plan.Database.ValueString(),
 		plan.Markdown.ValueString(),
+		r.mdClient.resolveMarkdownVersion(plan.MarkdownVersion),
 		props,
 	)
 	if err != nil {
@@ -203,8 +215,9 @@ func (r *DatabaseEntryResource) createWithMarkdown(ctx context.Context, plan *Da
 		return
 	}
 
-	plan.ID = types.StringValue(normalizeID(pageID))
-	plan.URL = types.StringValue(pageURL)
+	plan.ID = types.StringValue(normalizeID(created.ID))
+	plan.URL = types.StringValue(created.URL)
+	appendMarkdownWarnings(&resp.Diagnostics, created.ID, created.Warnings)
 
 	resp.Diagnostics.Append(resp.State.Set(ctx, plan)...)
 }
@@ -321,13 +334,18 @@ func (r *DatabaseEntryResource) Update(ctx context.Context, req resource.UpdateR
 
 	plan.URL = types.StringValue(page.URL)
 
-	// Update markdown content if set
-	if !plan.Markdown.IsNull() && !plan.Markdown.IsUnknown() {
-		_, err = r.mdClient.ReplacePageMarkdown(ctx, plan.ID.ValueString(), plan.Markdown.ValueString())
+	// Replace the body only when the markdown or its version changed. The
+	// replace sends allow_deleting_content, so resending it on every update
+	// would overwrite edits made in the Notion UI whenever an unrelated
+	// attribute such as the title changed.
+	if markdownNeedsReplace(plan.Markdown, state.Markdown, plan.MarkdownVersion, state.MarkdownVersion) {
+		replaced, err := r.mdClient.ReplacePageMarkdown(ctx, plan.ID.ValueString(), plan.Markdown.ValueString(),
+			r.mdClient.resolveMarkdownVersion(plan.MarkdownVersion))
 		if err != nil {
 			resp.Diagnostics.AddError("Error updating entry markdown", err.Error())
 			return
 		}
+		appendMarkdownWarnings(&resp.Diagnostics, plan.ID.ValueString(), replaced.Warnings)
 		// Keep plan value in state rather than API response to avoid normalization diffs
 	}
 
@@ -350,6 +368,12 @@ func (r *DatabaseEntryResource) Delete(ctx context.Context, req resource.DeleteR
 		resp.Diagnostics.AddError("Error trashing database entry", err.Error())
 		return
 	}
+}
+
+// ModifyPlan records the markdown_version the next write will use. See
+// modifyMarkdownVersionPlan.
+func (r *DatabaseEntryResource) ModifyPlan(ctx context.Context, req resource.ModifyPlanRequest, resp *resource.ModifyPlanResponse) {
+	modifyMarkdownVersionPlan(ctx, r.mdClient, req, resp)
 }
 
 func (r *DatabaseEntryResource) ImportState(ctx context.Context, req resource.ImportStateRequest, resp *resource.ImportStateResponse) {

@@ -233,20 +233,44 @@ func validateIconFields(f iconFields, diags *diag.Diagnostics) {
 }
 
 // containerExtras is the slice of a page or database object this file reads.
+// The last three fields exist only on databases. Each is nil when the
+// response doesn't carry it, and DatabaseType is also nil for a regular
+// database, where Notion sends null. DataSourceIDs are normalized without
+// hyphens like other IDs in this provider.
 type containerExtras struct {
-	Icon     parsedIcon
-	IsLocked bool
+	Icon                parsedIcon
+	IsLocked            bool
+	ShowDataSourceTitle *bool
+	DatabaseType        *string
+	DataSourceIDs       []string
 }
 
 func decodeContainerExtras(body []byte) (containerExtras, error) {
 	var v struct {
-		Icon     json.RawMessage `json:"icon"`
-		IsLocked bool            `json:"is_locked"`
+		Icon                json.RawMessage `json:"icon"`
+		IsLocked            bool            `json:"is_locked"`
+		ShowDataSourceTitle *bool           `json:"show_data_source_title"`
+		DatabaseType        *string         `json:"database_type"`
+		DataSources         []struct {
+			ID string `json:"id"`
+		} `json:"data_sources"`
 	}
 	if err := json.Unmarshal(body, &v); err != nil {
 		return containerExtras{}, fmt.Errorf("failed to parse response: %w", err)
 	}
-	return containerExtras{Icon: parseIcon(v.Icon), IsLocked: v.IsLocked}, nil
+	out := containerExtras{
+		Icon:                parseIcon(v.Icon),
+		IsLocked:            v.IsLocked,
+		ShowDataSourceTitle: v.ShowDataSourceTitle,
+		DatabaseType:        v.DatabaseType,
+	}
+	if v.DataSources != nil {
+		out.DataSourceIDs = make([]string, 0, len(v.DataSources))
+		for _, ds := range v.DataSources {
+			out.DataSourceIDs = append(out.DataSourceIDs, normalizeID(ds.ID))
+		}
+	}
+	return out, nil
 }
 
 // containerRequest sends a request on Notion-Version 2026-03-11 and returns
@@ -277,9 +301,11 @@ func containerRequest(ctx context.Context, token, method, kind, id string, body 
 }
 
 // patchContainerExtras sets icon and is_locked on a page or database. A nil
-// icon with clearIcon true sends `"icon": null`. Returns the extras from the
-// response. With nothing to change it falls back to a GET.
-func patchContainerExtras(ctx context.Context, token, kind, id string, icon map[string]interface{}, clearIcon bool, isLocked types.Bool) (containerExtras, error) {
+// icon with clearIcon true sends `"icon": null`. extra holds further
+// top-level fields for the same PATCH, such as show_data_source_title on a
+// database. Pages pass nil. Returns the extras from the response. With
+// nothing to change it falls back to a GET.
+func patchContainerExtras(ctx context.Context, token, kind, id string, icon map[string]interface{}, clearIcon bool, isLocked types.Bool, extra map[string]interface{}) (containerExtras, error) {
 	body := map[string]interface{}{}
 	switch {
 	case icon != nil:
@@ -289,6 +315,9 @@ func patchContainerExtras(ctx context.Context, token, kind, id string, icon map[
 	}
 	if !isLocked.IsNull() && !isLocked.IsUnknown() {
 		body["is_locked"] = isLocked.ValueBool()
+	}
+	for k, v := range extra {
+		body[k] = v
 	}
 
 	method := http.MethodPatch
