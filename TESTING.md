@@ -116,7 +116,7 @@ end up in the workspace trash, not hard-deleted.
 
 The acceptance tests destroy everything they build, so the test pages in Notion are empty. `examples/showcase` is a Terraform config that builds one page using every non-Enterprise feature and leaves it in place. The `Showcase` workflow (`.github/workflows/showcase.yml`) applies it with the real `terraform` CLI against a provider built from the branch through `dev_overrides`, then runs `terraform plan -detailed-exitcode` and fails if the plan isn't empty. It runs on manual dispatch, release tags, and same-repo PRs that touch the showcase, and it shares the `notion-acceptance-workspace` concurrency group.
 
-Each run first calls `scripts/showcase_cleanup.py`, which trashes the parent page's child pages titled `Provider showcase...` and nothing else. No state is kept between runs, so the newest showcase replaces the previous one. It uses `NOTION_TOKEN`, `NOTION_TEST_PARENT_PAGE_ID`, and optionally `NOTION_TEST_TEMPLATE_ID`. See `examples/showcase/README.md` for what it covers, what it leaves out, and how to run it locally.
+Each run first calls `scripts/showcase_cleanup.py`, which trashes the parent page's child pages whose titles start with `Provider showcase` and nothing else. No state is kept between runs, so the newest showcase replaces the previous one. It uses `NOTION_TOKEN`, `NOTION_TEST_PARENT_PAGE_ID`, and optionally `NOTION_TEST_TEMPLATE_ID`. See `examples/showcase/README.md` for what it covers, what it leaves out, and how to run it locally.
 
 ## CI and branch protection
 
