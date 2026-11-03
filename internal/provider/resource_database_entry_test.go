@@ -13,6 +13,9 @@ func TestAccDatabaseEntryResource(t *testing.T) {
 	if parentPageID == "" {
 		t.Skip("NOTION_TEST_PARENT_PAGE_ID not set")
 	}
+	// Work inside a throwaway child page so anything a failed run leaves
+	// behind is trashed with it.
+	parentPageID = makeIsolatedParentPage(t, notionTestClient(t), "databaseentryresource")
 
 	resource.Test(t, resource.TestCase{
 		ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
@@ -40,6 +43,9 @@ func TestAccDatabaseEntryResourceWithMarkdown(t *testing.T) {
 	if parentPageID == "" {
 		t.Skip("NOTION_TEST_PARENT_PAGE_ID not set")
 	}
+	// Work inside a throwaway child page so anything a failed run leaves
+	// behind is trashed with it.
+	parentPageID = makeIsolatedParentPage(t, notionTestClient(t), "databaseentryresourcewit")
 
 	resource.Test(t, resource.TestCase{
 		ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,

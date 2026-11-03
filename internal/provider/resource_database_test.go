@@ -13,6 +13,9 @@ func TestAccDatabaseResource(t *testing.T) {
 	if parentPageID == "" {
 		t.Skip("NOTION_TEST_PARENT_PAGE_ID not set")
 	}
+	// Work inside a throwaway child page so anything a failed run leaves
+	// behind is trashed with it.
+	parentPageID = makeIsolatedParentPage(t, notionTestClient(t), "databaseresource")
 
 	resource.Test(t, resource.TestCase{
 		ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,

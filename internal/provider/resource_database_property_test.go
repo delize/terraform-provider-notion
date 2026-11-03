@@ -13,6 +13,9 @@ func TestAccDatabasePropertyRichTextResource(t *testing.T) {
 	if parentPageID == "" {
 		t.Skip("NOTION_TEST_PARENT_PAGE_ID not set")
 	}
+	// Work inside a throwaway child page so anything a failed run leaves
+	// behind is trashed with it.
+	parentPageID = makeIsolatedParentPage(t, notionTestClient(t), "databasepropertyrichtext")
 
 	resource.Test(t, resource.TestCase{
 		ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
@@ -33,6 +36,9 @@ func TestAccDatabasePropertySelectResource(t *testing.T) {
 	if parentPageID == "" {
 		t.Skip("NOTION_TEST_PARENT_PAGE_ID not set")
 	}
+	// Work inside a throwaway child page so anything a failed run leaves
+	// behind is trashed with it.
+	parentPageID = makeIsolatedParentPage(t, notionTestClient(t), "databasepropertyselectre")
 
 	resource.Test(t, resource.TestCase{
 		ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
@@ -53,6 +59,9 @@ func TestAccDatabasePropertyNumberResource(t *testing.T) {
 	if parentPageID == "" {
 		t.Skip("NOTION_TEST_PARENT_PAGE_ID not set")
 	}
+	// Work inside a throwaway child page so anything a failed run leaves
+	// behind is trashed with it.
+	parentPageID = makeIsolatedParentPage(t, notionTestClient(t), "databasepropertynumberre")
 
 	resource.Test(t, resource.TestCase{
 		ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
@@ -133,6 +142,9 @@ func TestAccDatabasePropertyStatusResource(t *testing.T) {
 	if parentPageID == "" {
 		t.Skip("NOTION_TEST_PARENT_PAGE_ID not set")
 	}
+	// Work inside a throwaway child page so anything a failed run leaves
+	// behind is trashed with it.
+	parentPageID = makeIsolatedParentPage(t, notionTestClient(t), "databasepropertystatusre")
 
 	resource.Test(t, resource.TestCase{
 		ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
