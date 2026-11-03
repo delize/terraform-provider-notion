@@ -2,12 +2,10 @@
 page_title: "notion_agent Data Source - Notion"
 subcategory: ""
 description: |-
-  Beta. Reads one Notion Custom Agent.
+  Reads one Notion Custom Agent.
 ---
 
 # notion_agent (Data Source)
-
-~> **Beta:** This data source uses the Notion Agent APIs, which have been in public beta since 2026-08-20.
 
 Reads one Custom Agent, or the personal agent with `agent_id = "notion_ai"`. It works with a personal access token, or with a connection token that has the **View sessions and interact with agents** capability and that the agent is shared with.
 

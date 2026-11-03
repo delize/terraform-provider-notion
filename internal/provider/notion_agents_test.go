@@ -113,7 +113,7 @@ func TestGetAgent_NotFound(t *testing.T) {
 func TestUpdateAgentStatus(t *testing.T) {
 	var got map[string]string
 	agentTestServer(t, func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodPatch || r.URL.Path != "/v1/agents/a1/status" {
+		if r.Method != http.MethodPatch || r.URL.Path != "/v1/agents/a1" {
 			t.Errorf("unexpected %s %s", r.Method, r.URL.Path)
 		}
 		b, _ := io.ReadAll(r.Body)

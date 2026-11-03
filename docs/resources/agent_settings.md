@@ -2,14 +2,14 @@
 page_title: "notion_agent_settings Resource - Notion"
 subcategory: ""
 description: |-
-  Beta. Manages the enabled status and credit limit of an existing Notion Custom Agent.
+  Manages the enabled status and credit limit of an existing Notion Custom Agent.
 ---
 
 # notion_agent_settings (Resource)
 
-~> **Beta:** This resource uses the Notion Agent APIs, which have been in public beta since 2026-08-20. Notion may change them, and this resource will follow.
-
 Manages the enabled status and credit limit of an existing Custom Agent. The API can't create agents, so this resource adopts one by ID. Create it in Notion first.
+
+The Agent APIs have been generally available since 2026-11-02. A connection token needs the "Edit selected agents" capability to change an agent. Notion doesn't let a connection change a credit limit, so `credit_limit` and `unlimited_credits` need a personal access token.
 
 Each setting is managed only when you set it. Leave `enabled` out to keep Terraform away from the agent's status, and leave out both `credit_limit` and `unlimited_credits` to keep it away from the limit.
 

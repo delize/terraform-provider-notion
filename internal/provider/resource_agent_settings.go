@@ -16,7 +16,8 @@ import (
 )
 
 // notion_agent_settings manages the enabled status and credit limit of an
-// existing Custom Agent (Notion Agent APIs, public beta, 2026-08-20). The API
+// existing Custom Agent through the Notion Agent APIs (generally available
+// since 2026-11-02). The API
 // can't create agents, so the resource adopts one by ID. Destroying the
 // resource only removes it from state. It never deletes or changes the agent.
 
@@ -53,7 +54,7 @@ func (r *AgentSettingsResource) Metadata(_ context.Context, req resource.Metadat
 
 func (r *AgentSettingsResource) Schema(_ context.Context, _ resource.SchemaRequest, resp *resource.SchemaResponse) {
 	resp.Schema = schema.Schema{
-		Description: "Beta. Manages the enabled status and credit limit of an existing Notion Custom Agent through the Notion Agent APIs (public beta since 2026-08-20). " +
+		Description: "Manages the enabled status and credit limit of an existing Notion Custom Agent through the Notion Agent APIs. " +
 			"The API can't create agents, so this resource adopts one by ID. Destroying it only removes it from Terraform state and leaves the agent and its settings as they are.",
 		Attributes: map[string]schema.Attribute{
 			"id": schema.StringAttribute{

@@ -2,12 +2,10 @@
 page_title: "notion_agents Data Source - Notion"
 subcategory: ""
 description: |-
-  Beta. Lists the Notion Custom Agents the token can access.
+  Lists the Notion Custom Agents the token can access.
 ---
 
 # notion_agents (Data Source)
-
-~> **Beta:** This data source uses the Notion Agent APIs, which have been in public beta since 2026-08-20.
 
 Lists the Custom Agents the token can access, newest first. A personal access token sees the agents its user can read. A connection token sees only the agents shared with its connection.
 

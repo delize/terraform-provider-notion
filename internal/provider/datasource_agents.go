@@ -12,7 +12,7 @@ import (
 	"github.com/jomei/notionapi"
 )
 
-// Read-only views of the Notion Agent APIs (public beta, 2026-08-20):
+// Read-only views of the Notion Agent APIs (generally available since 2026-11-02):
 // notion_agent, notion_agents, and notion_agent_insights.
 
 var (
@@ -67,7 +67,7 @@ func (d *AgentDataSource) Metadata(_ context.Context, req datasource.MetadataReq
 
 func (d *AgentDataSource) Schema(_ context.Context, _ datasource.SchemaRequest, resp *datasource.SchemaResponse) {
 	resp.Schema = schema.Schema{
-		Description: "Beta. Reads one Custom Agent through the Notion Agent APIs (public beta since 2026-08-20). " +
+		Description: "Reads one Custom Agent through the Notion Agent APIs. " +
 			"Works with a personal access token, or a connection token with the View sessions and interact with agents capability that the agent is shared with.",
 		Attributes: map[string]schema.Attribute{
 			"agent_id": schema.StringAttribute{
@@ -178,7 +178,7 @@ func (d *AgentsDataSource) Metadata(_ context.Context, req datasource.MetadataRe
 
 func (d *AgentsDataSource) Schema(_ context.Context, _ datasource.SchemaRequest, resp *datasource.SchemaResponse) {
 	resp.Schema = schema.Schema{
-		Description: "Beta. Lists Custom Agents the token can access through the Notion Agent APIs (public beta since 2026-08-20). " +
+		Description: "Lists Custom Agents the token can access through the Notion Agent APIs. " +
 			"A personal access token sees the agents its user can read. A connection token sees only agents shared with its connection.",
 		Attributes: map[string]schema.Attribute{
 			"query": schema.StringAttribute{
@@ -370,7 +370,7 @@ func (d *AgentInsightsDataSource) Metadata(_ context.Context, req datasource.Met
 
 func (d *AgentInsightsDataSource) Schema(_ context.Context, _ datasource.SchemaRequest, resp *datasource.SchemaResponse) {
 	resp.Schema = schema.Schema{
-		Description: "Beta. Reads credit usage and run counts for a Custom Agent through the Notion Agent APIs (public beta since 2026-08-20). " +
+		Description: "Reads credit usage and run counts for a Custom Agent through the Notion Agent APIs. " +
 			"Pass notion_ai for the personal agent, which only works with a personal access token and covers only that token's user.",
 		Attributes: map[string]schema.Attribute{
 			"agent_id": schema.StringAttribute{Required: true, Description: "The agent ID, or notion_ai."},

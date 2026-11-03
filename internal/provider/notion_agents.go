@@ -181,14 +181,16 @@ func queryAgents(ctx context.Context, token string, req map[string]interface{}, 
 	}
 }
 
-// updateAgentStatus calls PATCH /v1/agents/{id}/status. Notion documents
-// "active" as re-enabling an agent that was disabled through the API.
+// updateAgentStatus sends the status through PATCH /v1/agents/{id}. Since
+// the Agent APIs became generally available (2026-11-02) that endpoint takes
+// status, and the old PATCH /v1/agents/{id}/status is deprecated. Notion
+// documents "active" as re-enabling an agent that was disabled.
 func updateAgentStatus(ctx context.Context, token, agentID string, enabled bool) error {
 	status := "disabled"
 	if enabled {
 		status = "active"
 	}
-	_, err := doAgentRequest(ctx, http.MethodPatch, agentURL(agentID, "/status"), token, map[string]string{"status": status})
+	_, err := doAgentRequest(ctx, http.MethodPatch, agentURL(agentID, ""), token, map[string]string{"status": status})
 	return err
 }
 

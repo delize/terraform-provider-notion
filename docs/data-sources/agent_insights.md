@@ -2,12 +2,10 @@
 page_title: "notion_agent_insights Data Source - Notion"
 subcategory: ""
 description: |-
-  Beta. Reads credit usage and run counts for a Notion Custom Agent.
+  Reads credit usage and run counts for a Notion Custom Agent.
 ---
 
 # notion_agent_insights (Data Source)
-
-~> **Beta:** This data source uses the Notion Agent APIs, which have been in public beta since 2026-08-20.
 
 Reads premium AI credit usage and completed runs for a Custom Agent over a time window, by default the current billing period.
 
