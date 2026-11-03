@@ -247,7 +247,7 @@ func buildBlockUpdateRequest(plan BlockResourceModel) (*notionapi.BlockUpdateReq
 		return &notionapi.BlockUpdateRequest{
 			Paragraph: &notionapi.Paragraph{
 				RichText: rt,
-				Color:    plan.Color.ValueString(),
+				Color:    blockColorForUpdate(plan.Color),
 			},
 		}, nil
 
@@ -255,7 +255,7 @@ func buildBlockUpdateRequest(plan BlockResourceModel) (*notionapi.BlockUpdateReq
 		return &notionapi.BlockUpdateRequest{
 			Heading1: &notionapi.Heading{
 				RichText:     rt,
-				Color:        plan.Color.ValueString(),
+				Color:        blockColorForUpdate(plan.Color),
 				IsToggleable: plan.IsToggleable.ValueBool(),
 			},
 		}, nil
@@ -264,7 +264,7 @@ func buildBlockUpdateRequest(plan BlockResourceModel) (*notionapi.BlockUpdateReq
 		return &notionapi.BlockUpdateRequest{
 			Heading2: &notionapi.Heading{
 				RichText:     rt,
-				Color:        plan.Color.ValueString(),
+				Color:        blockColorForUpdate(plan.Color),
 				IsToggleable: plan.IsToggleable.ValueBool(),
 			},
 		}, nil
@@ -273,7 +273,7 @@ func buildBlockUpdateRequest(plan BlockResourceModel) (*notionapi.BlockUpdateReq
 		return &notionapi.BlockUpdateRequest{
 			Heading3: &notionapi.Heading{
 				RichText:     rt,
-				Color:        plan.Color.ValueString(),
+				Color:        blockColorForUpdate(plan.Color),
 				IsToggleable: plan.IsToggleable.ValueBool(),
 			},
 		}, nil
@@ -282,7 +282,7 @@ func buildBlockUpdateRequest(plan BlockResourceModel) (*notionapi.BlockUpdateReq
 		return &notionapi.BlockUpdateRequest{
 			BulletedListItem: &notionapi.ListItem{
 				RichText: rt,
-				Color:    plan.Color.ValueString(),
+				Color:    blockColorForUpdate(plan.Color),
 			},
 		}, nil
 
@@ -290,7 +290,7 @@ func buildBlockUpdateRequest(plan BlockResourceModel) (*notionapi.BlockUpdateReq
 		return &notionapi.BlockUpdateRequest{
 			NumberedListItem: &notionapi.ListItem{
 				RichText: rt,
-				Color:    plan.Color.ValueString(),
+				Color:    blockColorForUpdate(plan.Color),
 			},
 		}, nil
 
@@ -299,7 +299,7 @@ func buildBlockUpdateRequest(plan BlockResourceModel) (*notionapi.BlockUpdateReq
 			ToDo: &notionapi.ToDo{
 				RichText: rt,
 				Checked:  plan.Checked.ValueBool(),
-				Color:    plan.Color.ValueString(),
+				Color:    blockColorForUpdate(plan.Color),
 			},
 		}, nil
 
@@ -307,7 +307,7 @@ func buildBlockUpdateRequest(plan BlockResourceModel) (*notionapi.BlockUpdateReq
 		return &notionapi.BlockUpdateRequest{
 			Toggle: &notionapi.Toggle{
 				RichText: rt,
-				Color:    plan.Color.ValueString(),
+				Color:    blockColorForUpdate(plan.Color),
 			},
 		}, nil
 
@@ -315,14 +315,14 @@ func buildBlockUpdateRequest(plan BlockResourceModel) (*notionapi.BlockUpdateReq
 		return &notionapi.BlockUpdateRequest{
 			Quote: &notionapi.Quote{
 				RichText: rt,
-				Color:    plan.Color.ValueString(),
+				Color:    blockColorForUpdate(plan.Color),
 			},
 		}, nil
 
 	case "callout":
 		callout := &notionapi.Callout{
 			RichText: rt,
-			Color:    plan.Color.ValueString(),
+			Color:    blockColorForUpdate(plan.Color),
 		}
 		if !plan.Icon.IsNull() && !plan.Icon.IsUnknown() && plan.Icon.ValueString() != "" {
 			callout.Icon = &notionapi.Icon{
@@ -396,7 +396,11 @@ func setRichTextState(rt []notionapi.RichText, state *BlockResourceModel) {
 }
 
 // readBlockIntoState extracts fields from a concrete SDK block into the flat schema model.
+// Notion reports an unset color as "default". normalizeBlockColor keeps that
+// as "" when the prior value was empty, so a block with no color configured
+// doesn't plan "default" -> "" forever.
 func readBlockIntoState(block notionapi.Block, state *BlockResourceModel) {
+	priorColor := state.Color
 	state.ID = types.StringValue(normalizeID(string(block.GetID())))
 	state.HasChildren = types.BoolValue(block.GetHasChildren())
 
@@ -416,47 +420,47 @@ func readBlockIntoState(block notionapi.Block, state *BlockResourceModel) {
 	switch b := block.(type) {
 	case *notionapi.ParagraphBlock:
 		setRichTextState(b.Paragraph.RichText, state)
-		state.Color = types.StringValue(b.Paragraph.Color)
+		state.Color = types.StringValue(normalizeBlockColor(b.Paragraph.Color, priorColor))
 
 	case *notionapi.Heading1Block:
 		setRichTextState(b.Heading1.RichText, state)
-		state.Color = types.StringValue(b.Heading1.Color)
+		state.Color = types.StringValue(normalizeBlockColor(b.Heading1.Color, priorColor))
 		state.IsToggleable = types.BoolValue(b.Heading1.IsToggleable)
 
 	case *notionapi.Heading2Block:
 		setRichTextState(b.Heading2.RichText, state)
-		state.Color = types.StringValue(b.Heading2.Color)
+		state.Color = types.StringValue(normalizeBlockColor(b.Heading2.Color, priorColor))
 		state.IsToggleable = types.BoolValue(b.Heading2.IsToggleable)
 
 	case *notionapi.Heading3Block:
 		setRichTextState(b.Heading3.RichText, state)
-		state.Color = types.StringValue(b.Heading3.Color)
+		state.Color = types.StringValue(normalizeBlockColor(b.Heading3.Color, priorColor))
 		state.IsToggleable = types.BoolValue(b.Heading3.IsToggleable)
 
 	case *notionapi.BulletedListItemBlock:
 		setRichTextState(b.BulletedListItem.RichText, state)
-		state.Color = types.StringValue(b.BulletedListItem.Color)
+		state.Color = types.StringValue(normalizeBlockColor(b.BulletedListItem.Color, priorColor))
 
 	case *notionapi.NumberedListItemBlock:
 		setRichTextState(b.NumberedListItem.RichText, state)
-		state.Color = types.StringValue(b.NumberedListItem.Color)
+		state.Color = types.StringValue(normalizeBlockColor(b.NumberedListItem.Color, priorColor))
 
 	case *notionapi.ToDoBlock:
 		setRichTextState(b.ToDo.RichText, state)
 		state.Checked = types.BoolValue(b.ToDo.Checked)
-		state.Color = types.StringValue(b.ToDo.Color)
+		state.Color = types.StringValue(normalizeBlockColor(b.ToDo.Color, priorColor))
 
 	case *notionapi.ToggleBlock:
 		setRichTextState(b.Toggle.RichText, state)
-		state.Color = types.StringValue(b.Toggle.Color)
+		state.Color = types.StringValue(normalizeBlockColor(b.Toggle.Color, priorColor))
 
 	case *notionapi.QuoteBlock:
 		setRichTextState(b.Quote.RichText, state)
-		state.Color = types.StringValue(b.Quote.Color)
+		state.Color = types.StringValue(normalizeBlockColor(b.Quote.Color, priorColor))
 
 	case *notionapi.CalloutBlock:
 		setRichTextState(b.Callout.RichText, state)
-		state.Color = types.StringValue(b.Callout.Color)
+		state.Color = types.StringValue(normalizeBlockColor(b.Callout.Color, priorColor))
 		if b.Callout.Icon != nil && b.Callout.Icon.Emoji != nil {
 			state.Icon = types.StringValue(string(*b.Callout.Icon.Emoji))
 		}
@@ -473,7 +477,7 @@ func readBlockIntoState(block notionapi.Block, state *BlockResourceModel) {
 		// No additional fields
 
 	case *notionapi.TableOfContentsBlock:
-		state.Color = types.StringValue(b.TableOfContents.Color)
+		state.Color = types.StringValue(normalizeBlockColor(b.TableOfContents.Color, priorColor))
 
 	case *notionapi.BookmarkBlock:
 		state.URL = types.StringValue(b.Bookmark.URL)
@@ -496,5 +500,17 @@ func readBlockIntoState(block notionapi.Block, state *BlockResourceModel) {
 
 	case *notionapi.ColumnBlock:
 		// No additional fields
+	}
+	// Attributes this block type doesn't use get their schema defaults, so an
+	// import reads back the same values a create stores. readRawBlockIntoState
+	// does the same for the raw block types.
+	for _, s := range []*types.String{&state.RichText, &state.Color, &state.Icon, &state.Language, &state.Caption, &state.URL, &state.Expression} {
+		setStringDefault(s)
+	}
+	if state.IsToggleable.IsNull() || state.IsToggleable.IsUnknown() {
+		state.IsToggleable = types.BoolValue(false)
+	}
+	if state.Checked.IsNull() || state.Checked.IsUnknown() {
+		state.Checked = types.BoolValue(false)
 	}
 }

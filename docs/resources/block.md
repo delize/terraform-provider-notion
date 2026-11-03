@@ -163,7 +163,7 @@ Tabs are matched by position. Changing a label or icon updates that tab in place
 
 - `after` (String) Insert after this block ID. Changing this forces a new resource.
 - `rich_text` (String) Text content of the block. Supports markdown links: `[text](url)`.
-- `color` (String) Block color (e.g. `default`, `red`, `blue_background`).
+- `color` (String) Block color: `default`, `gray`, `brown`, `orange`, `yellow`, `green`, `blue`, `purple`, `pink`, `red`, or one of the `_background` variants such as `default_background` or `blue_background`. Leave it unset for Notion's default color. Notion reports an unset color as `default`, which reads back as `""` so it doesn't show as a diff, and an import of an uncolored block reads `""` too. Removing `color` from the config resets the block to `default`.
 - `is_toggleable` (Boolean) Whether a heading block (`heading_1` to `heading_4`) is toggleable.
 - `checked` (Boolean) Whether a to-do block is checked.
 - `icon` (String) Emoji icon for callout blocks.

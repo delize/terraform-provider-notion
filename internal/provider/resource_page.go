@@ -293,7 +293,7 @@ func (r *PageResource) applyCreateExtras(ctx context.Context, plan *PageResource
 	if plan.iconFields().managed() {
 		icon = plan.iconFields().request()
 	}
-	extras, err := patchContainerExtras(ctx, token, "pages", plan.ID.ValueString(), icon, false, plan.IsLocked)
+	extras, err := patchContainerExtras(ctx, token, "pages", plan.ID.ValueString(), icon, false, plan.IsLocked, nil)
 	if err != nil {
 		diags.AddError("Error setting page icon or lock", err.Error())
 		return
