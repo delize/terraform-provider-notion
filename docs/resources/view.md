@@ -20,7 +20,7 @@ balloon if modeled as nested attributes. Use `jsonencode` to build them.
 ```terraform
 resource "notion_view" "by_status" {
   database_id    = notion_database.tasks.id
-  data_source_id = notion_database.tasks.default_data_source_id
+  data_source_id = notion_database.tasks.data_source_ids[0]
   name           = "By Status"
   type           = "board"
 
@@ -43,7 +43,7 @@ resource "notion_view" "by_status" {
 
 - `data_source_id` (String) ID of the data source this view is scoped to. Under
   the v2025-09-03 multi-source databases model, the data source is distinct
-  from the database. Changing this forces a new resource.
+  from the database. Changing this forces a new resource. For a database in the same configuration, use `notion_database.<name>.data_source_ids[0]`.
 - `name` (String) Display name of the view.
 - `type` (String) View type. One of `table`, `board`, `list`, `calendar`,
   `timeline`, `gallery`, `form`, `chart`, `map`, `dashboard`. Changing this

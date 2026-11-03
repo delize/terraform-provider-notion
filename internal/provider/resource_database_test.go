@@ -3,6 +3,7 @@ package provider
 import (
 	"fmt"
 	"os"
+	"regexp"
 	"testing"
 
 	"github.com/hashicorp/terraform-plugin-testing/helper/resource"
@@ -27,6 +28,9 @@ func TestAccDatabaseResource(t *testing.T) {
 					resource.TestCheckResourceAttr("notion_database.test", "title", "Test DB"),
 					resource.TestCheckResourceAttr("notion_database.test", "title_column_title", "Name"),
 					resource.TestCheckResourceAttrSet("notion_database.test", "url"),
+					resource.TestCheckNoResourceAttr("notion_database.test", "database_type"),
+					resource.TestCheckResourceAttr("notion_database.test", "data_source_ids.#", "1"),
+					resource.TestMatchResourceAttr("notion_database.test", "data_source_ids.0", regexp.MustCompile(`^[0-9a-f]{32}$`)),
 				),
 			},
 			{
@@ -101,6 +105,43 @@ resource "notion_database" "show" {
   title_column_title = "Name"
 %s}
 `, parentPageID, line)
+}
+
+// TestAccDatabaseDataSourceIDsFeedView creates a view on a new database by
+// referencing data_source_ids[0], with no API lookup in the test.
+func TestAccDatabaseDataSourceIDsFeedView(t *testing.T) {
+	if os.Getenv("NOTION_TOKEN") == "" {
+		t.Skip("NOTION_TOKEN not set")
+	}
+	parentPageID := makeIsolatedParentPage(t, notionTestClient(t), "db-ds-view")
+
+	resource.Test(t, resource.TestCase{
+		ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
+		CheckDestroy:             testAccCheckResourcesTrashed(t),
+		Steps: []resource.TestStep{
+			{
+				Config: fmt.Sprintf(`
+resource "notion_database" "ds" {
+  parent             = %q
+  title              = "Data source IDs"
+  title_column_title = "Name"
+}
+
+resource "notion_view" "table" {
+  database_id    = notion_database.ds.id
+  data_source_id = notion_database.ds.data_source_ids[0]
+  name           = "From data_source_ids"
+  type           = "table"
+}
+`, parentPageID),
+				Check: resource.ComposeAggregateTestCheckFunc(
+					resource.TestCheckResourceAttr("notion_database.ds", "data_source_ids.#", "1"),
+					resource.TestCheckResourceAttrSet("notion_view.table", "id"),
+					resource.TestCheckResourceAttrPair("notion_view.table", "data_source_id", "notion_database.ds", "data_source_ids.0"),
+				),
+			},
+		},
+	})
 }
 
 func testAccDatabaseResourceConfig(parentPageID, title, titleColumnTitle string) string {

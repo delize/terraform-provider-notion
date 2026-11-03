@@ -5,11 +5,13 @@ import (
 	"fmt"
 	"net/http"
 
+	"github.com/hashicorp/terraform-plugin-framework/attr"
 	"github.com/hashicorp/terraform-plugin-framework/path"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/booldefault"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/boolplanmodifier"
+	"github.com/hashicorp/terraform-plugin-framework/resource/schema/listplanmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/planmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/stringplanmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/types"
@@ -42,6 +44,8 @@ type DatabaseResourceModel struct {
 	IconCustomEmoji  types.String `tfsdk:"icon_custom_emoji_id"`
 	IsLocked         types.Bool   `tfsdk:"is_locked"`
 	ShowDSTitle      types.Bool   `tfsdk:"show_data_source_title"`
+	DatabaseType     types.String `tfsdk:"database_type"`
+	DataSourceIDs    types.List   `tfsdk:"data_source_ids"`
 }
 
 func (m *DatabaseResourceModel) iconFields() iconFields {
@@ -180,6 +184,21 @@ func (r *DatabaseResource) Schema(_ context.Context, _ resource.SchemaRequest, r
 					boolplanmodifier.UseStateForUnknown(),
 				},
 			},
+			"database_type": schema.StringAttribute{
+				Description: "The typed database kind Notion reports, such as `tasks`, `projects`, or `skills`. Null for a regular database.",
+				Computed:    true,
+				PlanModifiers: []planmodifier.String{
+					stringplanmodifier.UseStateForUnknown(),
+				},
+			},
+			"data_source_ids": schema.ListAttribute{
+				Description: "IDs of the database's data sources, without hyphens. Use one as `data_source_id` on `notion_view`.",
+				ElementType: types.StringType,
+				Computed:    true,
+				PlanModifiers: []planmodifier.List{
+					listplanmodifier.UseStateForUnknown(),
+				},
+			},
 		},
 	}
 }
@@ -238,6 +257,27 @@ func finishExtras(plan *DatabaseResourceModel, extras containerExtras) {
 	case plan.ShowDSTitle.IsUnknown():
 		plan.ShowDSTitle = types.BoolNull()
 	}
+	plan.setReadOnly(extras)
+}
+
+// setReadOnly copies database_type and data_source_ids from a 2026-03-11
+// database response. database_type isn't validated, so a new kind Notion
+// adds reads through as is.
+func (m *DatabaseResourceModel) setReadOnly(extras containerExtras) {
+	if extras.DatabaseType == nil {
+		m.DatabaseType = types.StringNull()
+	} else {
+		m.DatabaseType = types.StringValue(*extras.DatabaseType)
+	}
+	if extras.DataSourceIDs == nil {
+		m.DataSourceIDs = types.ListNull(types.StringType)
+		return
+	}
+	ids := make([]attr.Value, len(extras.DataSourceIDs))
+	for i, id := range extras.DataSourceIDs {
+		ids[i] = types.StringValue(id)
+	}
+	m.DataSourceIDs = types.ListValueMust(types.StringType, ids)
 }
 
 // showDSTitleValue maps the response field to state, null when absent.
@@ -316,6 +356,12 @@ func (r *DatabaseResource) Create(ctx context.Context, req resource.CreateReques
 		if plan.ShowDSTitle.IsUnknown() {
 			plan.ShowDSTitle = types.BoolNull()
 		}
+		if plan.DatabaseType.IsUnknown() {
+			plan.DatabaseType = types.StringNull()
+		}
+		if plan.DataSourceIDs.IsUnknown() {
+			plan.DataSourceIDs = types.ListNull(types.StringType)
+		}
 		resp.Diagnostics.Append(resp.State.Set(ctx, &plan)...)
 		return
 	}
@@ -349,9 +395,9 @@ func (r *DatabaseResource) Read(ctx context.Context, req resource.ReadRequest, r
 	state.Description = types.StringValue(richTextToPlain(db.Description))
 
 	// The schema read above stays on the SDK (2022-06-28, where properties
-	// live on the database). Icon, is_locked, and show_data_source_title
-	// come from a second GET on 2026-03-11, which reports native icons and
-	// custom emoji.
+	// live on the database). Icon, is_locked, show_data_source_title,
+	// database_type, and data_source_ids come from a second GET on
+	// 2026-03-11, which reports native icons, custom emoji, and data sources.
 	token, err := tokenForClient(r.client)
 	if err != nil {
 		resp.Diagnostics.AddError("Error reading database", err.Error())
@@ -372,6 +418,7 @@ func (r *DatabaseResource) Read(ctx context.Context, req resource.ReadRequest, r
 	state.setManagedIcon(reconciled)
 	state.IsLocked = types.BoolValue(extras.IsLocked)
 	state.ShowDSTitle = showDSTitleValue(extras)
+	state.setReadOnly(extras)
 
 	if db.Parent.Type == notionapi.ParentTypePageID {
 		state.Parent = types.StringValue(normalizeID(string(db.Parent.PageID)))

@@ -233,12 +233,16 @@ func validateIconFields(f iconFields, diags *diag.Diagnostics) {
 }
 
 // containerExtras is the slice of a page or database object this file reads.
-// ShowDataSourceTitle exists only on databases, and is nil when the response
-// doesn't carry it.
+// The last three fields exist only on databases. Each is nil when the
+// response doesn't carry it, and DatabaseType is also nil for a regular
+// database, where Notion sends null. DataSourceIDs are normalized without
+// hyphens like other IDs in this provider.
 type containerExtras struct {
 	Icon                parsedIcon
 	IsLocked            bool
 	ShowDataSourceTitle *bool
+	DatabaseType        *string
+	DataSourceIDs       []string
 }
 
 func decodeContainerExtras(body []byte) (containerExtras, error) {
@@ -246,15 +250,27 @@ func decodeContainerExtras(body []byte) (containerExtras, error) {
 		Icon                json.RawMessage `json:"icon"`
 		IsLocked            bool            `json:"is_locked"`
 		ShowDataSourceTitle *bool           `json:"show_data_source_title"`
+		DatabaseType        *string         `json:"database_type"`
+		DataSources         []struct {
+			ID string `json:"id"`
+		} `json:"data_sources"`
 	}
 	if err := json.Unmarshal(body, &v); err != nil {
 		return containerExtras{}, fmt.Errorf("failed to parse response: %w", err)
 	}
-	return containerExtras{
+	out := containerExtras{
 		Icon:                parseIcon(v.Icon),
 		IsLocked:            v.IsLocked,
 		ShowDataSourceTitle: v.ShowDataSourceTitle,
-	}, nil
+		DatabaseType:        v.DatabaseType,
+	}
+	if v.DataSources != nil {
+		out.DataSourceIDs = make([]string, 0, len(v.DataSources))
+		for _, ds := range v.DataSources {
+			out.DataSourceIDs = append(out.DataSourceIDs, normalizeID(ds.ID))
+		}
+	}
+	return out, nil
 }
 
 // containerRequest sends a request on Notion-Version 2026-03-11 and returns

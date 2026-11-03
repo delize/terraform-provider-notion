@@ -133,6 +133,74 @@ func TestDatabaseExtraFields(t *testing.T) {
 	}
 }
 
+func TestDecodeContainerExtras_DatabaseTypeAndDataSources(t *testing.T) {
+	e, err := decodeContainerExtras([]byte(`{"database_type":"skills","data_sources":[
+	  {"id":"c174b72c-d782-432f-8dc0-b647e1c96df6","name":"Tasks"},{"id":"aaaa-bbbb","name":"Other"}]}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if e.DatabaseType == nil || *e.DatabaseType != "skills" {
+		t.Errorf("database_type = %v, want skills", e.DatabaseType)
+	}
+	if len(e.DataSourceIDs) != 2 || e.DataSourceIDs[0] != "c174b72cd782432f8dc0b647e1c96df6" || e.DataSourceIDs[1] != "aaaabbbb" {
+		t.Errorf("data_source_ids = %q", e.DataSourceIDs)
+	}
+
+	e, _ = decodeContainerExtras([]byte(`{"database_type":null,"data_sources":[]}`))
+	if e.DatabaseType != nil || e.DataSourceIDs == nil || len(e.DataSourceIDs) != 0 {
+		t.Errorf("regular database: %+v", e)
+	}
+	e, _ = decodeContainerExtras([]byte(`{"object":"page"}`))
+	if e.DatabaseType != nil || e.DataSourceIDs != nil {
+		t.Errorf("page: %+v", e)
+	}
+}
+
+func TestDatabaseSetReadOnly(t *testing.T) {
+	kind := "github_prs"
+	var m DatabaseResourceModel
+	m.setReadOnly(containerExtras{DatabaseType: &kind, DataSourceIDs: []string{"ds1", "ds2"}})
+	if m.DatabaseType.ValueString() != "github_prs" {
+		t.Errorf("database_type = %s", m.DatabaseType)
+	}
+	if got := m.DataSourceIDs.String(); got != `["ds1","ds2"]` {
+		t.Errorf("data_source_ids = %s", got)
+	}
+
+	m.setReadOnly(containerExtras{DataSourceIDs: []string{}})
+	if !m.DatabaseType.IsNull() || m.DataSourceIDs.IsNull() || len(m.DataSourceIDs.Elements()) != 0 {
+		t.Errorf("regular database: %s %s", m.DatabaseType, m.DataSourceIDs)
+	}
+	m.setReadOnly(containerExtras{})
+	if !m.DataSourceIDs.IsNull() {
+		t.Errorf("missing data_sources should be null, got %s", m.DataSourceIDs)
+	}
+}
+
+// A view can take its data_source_id from the database in the same config.
+func TestUnitDatabaseDataSourceIDs_FeedView(t *testing.T) {
+	resource.UnitTest(t, resource.TestCase{
+		ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
+		Steps: []resource.TestStep{{
+			Config: iconUnitProvider + `
+resource "notion_database" "t" {
+  parent             = "00000000000000000000000000000000"
+  title              = "x"
+  title_column_title = "Name"
+}
+
+resource "notion_view" "v" {
+  database_id    = notion_database.t.id
+  data_source_id = notion_database.t.data_source_ids[0]
+  name           = "Table"
+  type           = "table"
+}`,
+			PlanOnly:           true,
+			ExpectNonEmptyPlan: true,
+		}},
+	})
+}
+
 func TestUnitDatabaseShowDataSourceTitle_ValidPlan(t *testing.T) {
 	resource.UnitTest(t, resource.TestCase{
 		ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
