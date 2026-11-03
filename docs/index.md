@@ -139,7 +139,7 @@ provider "notion" {
 - `notion_database_property_last_edited_by` - Last edited by property (automatic)
 
 ### Custom Agent Resources (beta)
-- `notion_agent_settings` - Enabled status and credit limit of an existing Custom Agent (Agent APIs public beta, 2026-08-20)
+- `notion_agent_settings` - Name, description, model, enabled status, and credit limit of an existing Custom Agent (Agent APIs generally available since 2026-11-02)
 
 ## Data Sources
 
