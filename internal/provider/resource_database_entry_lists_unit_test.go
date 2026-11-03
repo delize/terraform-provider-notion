@@ -17,6 +17,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/tfsdk"
 	"github.com/hashicorp/terraform-plugin-framework/types"
 	"github.com/hashicorp/terraform-plugin-go/tftypes"
+	tfresource "github.com/hashicorp/terraform-plugin-testing/helper/resource"
 	"github.com/jomei/notionapi"
 )
 
@@ -431,4 +432,42 @@ func TestValidateEntryListMaps(t *testing.T) {
 			t.Errorf("%s: got %v, want %q", c.name, diags, c.wantErr)
 		}
 	}
+}
+
+// The acceptance configs plan cleanly through real Terraform, so a typo in
+// them or in the schema shows up without a workspace.
+func TestUnitDatabaseEntryLists_ValidPlans(t *testing.T) {
+	const parent = "00000000000000000000000000000000"
+	for _, cfg := range []string{
+		testAccDatabaseEntryListsConfig(parent, `
+  multi_select_properties = { "Tags" = ["A", "B"] }
+  relation_properties     = { "Links" = [local.target_c_hyphenated] }
+  phone_number_properties = { "Phone" = "+1 415 555 0100" }`),
+		testAccDatabaseEntryListsConfig(parent, `
+  relation_properties = { "Links" = [] }`),
+		testAccDatabaseEntryPeopleConfig(parent, `["aaaaaaaa-0000-0000-0000-000000000001"]`),
+	} {
+		tfresource.UnitTest(t, tfresource.TestCase{
+			ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
+			Steps: []tfresource.TestStep{{
+				Config:             iconUnitProvider + cfg,
+				PlanOnly:           true,
+				ExpectNonEmptyPlan: true,
+			}},
+		})
+	}
+}
+
+func TestUnitDatabaseEntryLists_RejectedAtPlan(t *testing.T) {
+	entry := func(body string) string {
+		return `
+resource "notion_database_entry" "t" {
+  database = "00000000000000000000000000000000"
+  title    = "x"
+  ` + body + `
+}`
+	}
+	planOnlyError(t, entry(`multi_select_properties = { "Tags" = ["a,b"] }`), `can't contain commas`)
+	planOnlyError(t, entry(`relation_properties = { "Links" = ["aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee", "aaaaaaaabbbbccccddddeeeeeeeeeeee"] }`), `listed more than once`)
+	planOnlyError(t, entry(`people_properties = { "Owner" = [for i in range(101) : format("u%d", i)] }`), `at most 100 values`)
 }
