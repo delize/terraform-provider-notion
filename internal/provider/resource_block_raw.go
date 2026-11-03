@@ -17,7 +17,7 @@ import (
 // SDK path in resource_block.go.
 
 // rawBlockTypes lists the notion_block types handled here.
-var rawBlockTypes = map[string]bool{"heading_4": true, "tab": true}
+var rawBlockTypes = map[string]bool{"heading_4": true, "tab": true, "callout": true}
 
 func isRawBlockType(t string) bool { return rawBlockTypes[t] }
 
@@ -51,8 +51,9 @@ func (m tabItemModel) spec() tabItemSpec {
 	return tabItemSpec{Label: m.Label.ValueString(), Icon: m.Icon.ValueString()}
 }
 
-// createRawBlock appends a heading_4 or tab block and fills plan from the
-// result. For a tab it then lists the new tab items to learn their IDs.
+// createRawBlock appends a heading_4, tab, or callout block and fills plan
+// from the result. For a tab it then lists the new tab items to learn their
+// IDs.
 func (r *BlockResource) createRawBlock(ctx context.Context, plan *BlockResourceModel) diag.Diagnostics {
 	var diags diag.Diagnostics
 	token, err := tokenForClient(r.client)
@@ -75,6 +76,17 @@ func (r *BlockResource) createRawBlock(ctx context.Context, plan *BlockResourceM
 			"type":      "heading_4",
 			"heading_4": heading4Body(rt, plan.Color.ValueString(), plan.IsToggleable.ValueBool()),
 		}
+	case "callout":
+		rt, err := resolveRichText(*plan)
+		if err != nil {
+			diags.AddError("Error building block", err.Error())
+			return diags
+		}
+		block = map[string]interface{}{
+			"object":  "block",
+			"type":    "callout",
+			"callout": calloutBody(rt, plan.Color.ValueString(), plan.iconFields().request(), false),
+		}
 	case "tab":
 		items, diags = tabItemsFromList(ctx, plan.TabItems)
 		if diags.HasError() {
@@ -91,7 +103,9 @@ func (r *BlockResource) createRawBlock(ctx context.Context, plan *BlockResourceM
 	if !plan.After.IsNull() && !plan.After.IsUnknown() {
 		after = plan.After.ValueString()
 	}
-	results, err := appendBlocksRaw(ctx, token, plan.ParentID.ValueString(), []map[string]interface{}{block}, after)
+	// Appending has no idempotency key, so a resend after Notion answered
+	// could create the block twice.
+	results, err := appendBlocksRaw(withNoReplay(ctx), token, plan.ParentID.ValueString(), []map[string]interface{}{block}, after)
 	if err != nil {
 		diags.AddError("Error creating block", err.Error())
 		return diags
@@ -102,7 +116,11 @@ func (r *BlockResource) createRawBlock(ctx context.Context, plan *BlockResourceM
 	}
 
 	created := results[0]
+	planned := plan.iconFields()
 	readRawBlockIntoState(&created, plan)
+	if plan.Type.ValueString() == "callout" {
+		plan.setIconFields(keepPlannedIcon(planned, plan.iconFields()))
+	}
 
 	if plan.Type.ValueString() == "tab" {
 		children, err := listBlockChildrenRaw(ctx, token, created.ID)
@@ -131,8 +149,8 @@ func (r *BlockResource) createRawBlock(ctx context.Context, plan *BlockResourceM
 	return diags
 }
 
-// readRawBlock refreshes state for a heading_4 or tab block. It reports
-// found=false when the block is gone or in the trash.
+// readRawBlock refreshes state for a heading_4, tab, or callout block. It
+// reports found=false when the block is gone or in the trash.
 func (r *BlockResource) readRawBlock(ctx context.Context, token string, b *rawBlock, state *BlockResourceModel) (bool, diag.Diagnostics) {
 	var diags diag.Diagnostics
 	if b.InTrash || b.Archived {
@@ -170,7 +188,8 @@ func tabItemsFromChildren(children []rawBlock) []tabItemModel {
 	return items
 }
 
-// updateRawBlock applies a plan to an existing heading_4 or tab block.
+// updateRawBlock applies a plan to an existing heading_4, tab, or callout
+// block.
 func (r *BlockResource) updateRawBlock(ctx context.Context, prior, plan *BlockResourceModel) diag.Diagnostics {
 	var diags diag.Diagnostics
 	token, err := tokenForClient(r.client)
@@ -194,6 +213,27 @@ func (r *BlockResource) updateRawBlock(ctx context.Context, prior, plan *BlockRe
 			return diags
 		}
 		readRawBlockIntoState(updated, plan)
+
+	case "callout":
+		rt, err := resolveRichText(*plan)
+		if err != nil {
+			diags.AddError("Error building block update", err.Error())
+			return diags
+		}
+		planned := plan.iconFields()
+		icon := planned.request()
+		// Every icon attribute was removed from the config, so clear the
+		// icon the prior state tracked.
+		clearIcon := icon == nil && (prior.Icon.ValueString() != "" || prior.iconFields().managed())
+		updated, err := updateBlockRaw(ctx, token, plan.ID.ValueString(), map[string]interface{}{
+			"callout": calloutBody(rt, plan.Color.ValueString(), icon, clearIcon),
+		})
+		if err != nil {
+			diags.AddError("Error updating block", err.Error())
+			return diags
+		}
+		readRawBlockIntoState(updated, plan)
+		plan.setIconFields(keepPlannedIcon(planned, plan.iconFields()))
 
 	case "tab":
 		priorItems, d := tabItemsFromList(ctx, prior.TabItems)
@@ -353,8 +393,38 @@ func readRawBlockIntoState(b *rawBlock, state *BlockResourceModel) {
 		setRichTextState(b.Heading4.RichText, state)
 		state.Color = types.StringValue(normalizeBlockColor(b.Heading4.Color, priorColor))
 		state.IsToggleable = types.BoolValue(b.Heading4.IsToggleable)
+	case "callout":
+		if b.Callout == nil {
+			return
+		}
+		setRichTextState(b.Callout.RichText, state)
+		state.Color = types.StringValue(normalizeBlockColor(b.Callout.Color, priorColor))
+		// Same rule as pages: the emoji `icon` always reflects Notion, so a
+		// changed or removed emoji shows as drift, and the other icon kinds
+		// are only tracked when configured.
+		state.setIconFields(state.iconFields().reconcile(b.Callout.icon()))
 	case "tab":
 		state.RichText = types.StringValue("")
+	}
+}
+
+// keepPlannedIcon returns the icon attributes to save after a create or
+// update. Terraform requires a known planned value to be saved unchanged,
+// so the plan wins and the next refresh reports any difference. A value
+// that was unknown at plan time takes what Notion returned.
+func keepPlannedIcon(planned, returned iconFields) iconFields {
+	pick := func(p, r types.String) types.String {
+		if p.IsUnknown() {
+			return r
+		}
+		return p
+	}
+	return iconFields{
+		Emoji:         pick(planned.Emoji, returned.Emoji),
+		Name:          pick(planned.Name, returned.Name),
+		Color:         pick(planned.Color, returned.Color),
+		URL:           pick(planned.URL, returned.URL),
+		CustomEmojiID: pick(planned.CustomEmojiID, returned.CustomEmojiID),
 	}
 }
 

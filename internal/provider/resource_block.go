@@ -46,7 +46,26 @@ type BlockResourceModel struct {
 	Expression   types.String `tfsdk:"expression"`
 	SyncedFrom   types.String `tfsdk:"synced_from"`
 	TabItems     types.List   `tfsdk:"tab_items"`
+
+	IconName          types.String `tfsdk:"icon_name"`
+	IconColor         types.String `tfsdk:"icon_color"`
+	IconURL           types.String `tfsdk:"icon_url"`
+	IconCustomEmojiID types.String `tfsdk:"icon_custom_emoji_id"`
 }
+
+// iconFields returns the callout icon attributes. Emoji is the legacy
+// `icon` attribute.
+func (m *BlockResourceModel) iconFields() iconFields {
+	return iconFields{Emoji: m.Icon, Name: m.IconName, Color: m.IconColor, URL: m.IconURL, CustomEmojiID: m.IconCustomEmojiID}
+}
+
+func (m *BlockResourceModel) setIconFields(f iconFields) {
+	m.Icon, m.IconName, m.IconColor, m.IconURL, m.IconCustomEmojiID = f.Emoji, f.Name, f.Color, f.URL, f.CustomEmojiID
+}
+
+// calloutIconAttrs are the icon attributes that only apply to callouts.
+// The emoji `icon` predates them and keeps its old, lenient behavior.
+var calloutIconAttrs = []string{"icon_name", "icon_color", "icon_url", "icon_custom_emoji_id"}
 
 func NewBlockResource() resource.Resource {
 	return &BlockResource{}
@@ -130,10 +149,29 @@ func (r *BlockResource) Schema(_ context.Context, _ resource.SchemaRequest, resp
 				Default:     booldefault.StaticBool(false),
 			},
 			"icon": schema.StringAttribute{
-				Description: "Emoji icon for callout blocks.",
+				Description: "Emoji icon for callout blocks. On a callout it defaults to an empty string, so an emoji set in the Notion UI is removed on the next apply unless it's configured here. " +
+					"Conflicts with icon_name, icon_url, and icon_custom_emoji_id.",
+				Optional: true,
+				Computed: true,
+				Default:  stringdefault.StaticString(""),
+			},
+			"icon_name": schema.StringAttribute{
+				Description: "Native Notion icon name for a callout, such as `pizza` (2026-03-25). Notion returns its internal icon name, " +
+					"so use that rather than a picker alias to avoid a diff. Only valid when type is callout.",
+				Optional: true,
+			},
+			"icon_color": schema.StringAttribute{
+				Description: "Color of the native icon set with icon_name: gray, lightgray, brown, yellow, orange, green, blue, purple, pink, or red. " +
+					"Notion defaults to gray. Only valid when type is callout.",
+				Optional: true,
+			},
+			"icon_url": schema.StringAttribute{
+				Description: "External image URL for a callout icon. URLs from Notion's own icon set are rejected, use icon_name for those. Only valid when type is callout.",
 				Optional:    true,
-				Computed:    true,
-				Default:     stringdefault.StaticString(""),
+			},
+			"icon_custom_emoji_id": schema.StringAttribute{
+				Description: "ID of a custom emoji in the integration's workspace to use as a callout icon. Only valid when type is callout.",
+				Optional:    true,
 			},
 			"language": schema.StringAttribute{
 				Description: "Programming language for code blocks.",
@@ -200,13 +238,26 @@ func (r *BlockResource) Schema(_ context.Context, _ resource.SchemaRequest, resp
 	}
 }
 
-// ValidateConfig checks the tab-specific rules: tab_items is required for
-// a tab and only valid there, and a tab has no text or color of its own.
+// ValidateConfig checks the callout icon rules and the tab-specific rules.
+// The non-emoji icon attributes are only valid on a callout and follow the
+// same rules as on notion_page. tab_items is required for a tab and only
+// valid there, and a tab has no text or color of its own.
 func (r *BlockResource) ValidateConfig(ctx context.Context, req resource.ValidateConfigRequest, resp *resource.ValidateConfigResponse) {
 	var cfg BlockResourceModel
 	resp.Diagnostics.Append(req.Config.Get(ctx, &cfg)...)
 	if resp.Diagnostics.HasError() || cfg.Type.IsUnknown() || cfg.Type.IsNull() {
 		return
+	}
+
+	if cfg.Type.ValueString() == "callout" {
+		validateIconFields(cfg.iconFields(), &resp.Diagnostics)
+	} else {
+		for i, v := range []types.String{cfg.IconName, cfg.IconColor, cfg.IconURL, cfg.IconCustomEmojiID} {
+			if !v.IsNull() {
+				resp.Diagnostics.AddAttributeError(path.Root(calloutIconAttrs[i]), "Attribute only valid on callout blocks",
+					fmt.Sprintf("%s only applies to blocks of type callout, not %q.", calloutIconAttrs[i], cfg.Type.ValueString()))
+			}
+		}
 	}
 
 	if cfg.Type.ValueString() != "tab" {
@@ -312,8 +363,8 @@ func (r *BlockResource) Read(ctx context.Context, req resource.ReadRequest, resp
 		return
 	}
 
-	// heading_4 and tab go over direct HTTP. After an import the type isn't
-	// known yet, so fetch the raw block once to find out.
+	// heading_4, tab, and callout go over direct HTTP. After an import the
+	// type isn't known yet, so fetch the raw block once to find out.
 	if state.Type.IsNull() || state.Type.IsUnknown() || isRawBlockType(state.Type.ValueString()) {
 		token, err := tokenForClient(r.client)
 		if err != nil {
