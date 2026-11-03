@@ -325,8 +325,11 @@ func (r *DatabaseEntryResource) Update(ctx context.Context, req resource.UpdateR
 
 	plan.URL = types.StringValue(page.URL)
 
-	// Update markdown content if set
-	if !plan.Markdown.IsNull() && !plan.Markdown.IsUnknown() {
+	// Replace the body only when the markdown or its version changed. The
+	// replace sends allow_deleting_content, so resending it on every update
+	// would overwrite edits made in the Notion UI whenever an unrelated
+	// attribute such as the title changed.
+	if markdownNeedsReplace(plan.Markdown, state.Markdown, plan.MarkdownVersion, state.MarkdownVersion) {
 		_, err = r.mdClient.ReplacePageMarkdown(ctx, plan.ID.ValueString(), plan.Markdown.ValueString(),
 			r.mdClient.resolveMarkdownVersion(plan.MarkdownVersion))
 		if err != nil {
