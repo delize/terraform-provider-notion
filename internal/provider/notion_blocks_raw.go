@@ -89,17 +89,15 @@ func heading4Body(rt []notionapi.RichText, color string, toggleable bool) map[st
 	return body
 }
 
-// tabItemBody builds a tab item paragraph payload. clearIcon sends an
-// explicit null so an icon removed from the config is removed in Notion.
-func tabItemBody(item tabItemSpec, clearIcon bool) map[string]interface{} {
+// tabItemBody builds a tab item paragraph payload. Update a block only
+// accepts an icon object, never null, so an icon can be set or changed
+// through the API but not removed. See tabIconRemovals.
+func tabItemBody(item tabItemSpec) map[string]interface{} {
 	body := map[string]interface{}{
 		"rich_text": richTextOrEmpty(plainToRichText(item.Label)),
 	}
-	switch {
-	case item.Icon != "":
+	if item.Icon != "" {
 		body["icon"] = map[string]string{"type": "emoji", "emoji": item.Icon}
-	case clearIcon:
-		body["icon"] = nil
 	}
 	return body
 }
@@ -108,7 +106,7 @@ func tabItemBlock(item tabItemSpec) map[string]interface{} {
 	return map[string]interface{}{
 		"object":    "block",
 		"type":      "paragraph",
-		"paragraph": tabItemBody(item, false),
+		"paragraph": tabItemBody(item),
 	}
 }
 

@@ -4,9 +4,11 @@ import (
 	"context"
 	"fmt"
 	"net/http"
+	"strings"
 
 	"github.com/hashicorp/terraform-plugin-framework/attr"
 	"github.com/hashicorp/terraform-plugin-framework/diag"
+	"github.com/hashicorp/terraform-plugin-framework/path"
 	"github.com/hashicorp/terraform-plugin-framework/types"
 )
 
@@ -201,6 +203,12 @@ func (r *BlockResource) updateRawBlock(ctx context.Context, prior, plan *BlockRe
 		if diags.HasError() {
 			return diags
 		}
+		if removed := tabIconRemovals(priorItems, planItems); len(removed) > 0 {
+			diags.AddAttributeError(path.Root("tab_items"), "Notion can't remove a tab icon through the API",
+				fmt.Sprintf("The config removes the icon from tab %s. Notion's API can set or change a tab icon but not remove it. "+
+					"Remove it in the Notion app and then from the config, or set a different emoji.", strings.Join(removed, ", ")))
+			return diags
+		}
 		ids, err := reconcileTabItems(ctx, token, plan.ID.ValueString(), priorItems, planItems)
 		if err != nil {
 			diags.AddError("Error updating tab items", err.Error())
@@ -215,6 +223,19 @@ func (r *BlockResource) updateRawBlock(ctx context.Context, prior, plan *BlockRe
 		plan.HasChildren = types.BoolValue(true)
 	}
 	return diags
+}
+
+// tabIconRemovals returns the labels of tabs whose icon the plan removes.
+// Update a block takes only an icon object, so this is checked before any
+// request instead of failing halfway through the update.
+func tabIconRemovals(prior, plan []tabItemModel) []string {
+	var out []string
+	for i := range plan {
+		if i < len(prior) && prior[i].Icon.ValueString() != "" && plan[i].Icon.ValueString() == "" {
+			out = append(out, fmt.Sprintf("%q", plan[i].Label.ValueString()))
+		}
+	}
+	return out
 }
 
 // tabItemOps is the set of API calls that turns prior tab items into the
@@ -257,9 +278,8 @@ func reconcileTabItems(ctx context.Context, token, tabID string, prior, plan []t
 	}
 
 	for _, i := range ops.Update {
-		clearIcon := prior[i].Icon.ValueString() != "" && plan[i].Icon.ValueString() == ""
 		if _, err := updateBlockRaw(ctx, token, ids[i], map[string]interface{}{
-			"paragraph": tabItemBody(plan[i].spec(), clearIcon),
+			"paragraph": tabItemBody(plan[i].spec()),
 		}); err != nil {
 			return nil, err
 		}

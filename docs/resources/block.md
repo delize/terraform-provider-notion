@@ -175,7 +175,7 @@ Tabs are matched by position. Changing a label or icon updates that tab in place
 - `synced_from` (String) Source block ID for synced block copies. Changing this forces a new resource.
 - `tab_items` (Attributes List) Tabs of a `tab` block, in order. Required for `tab` and not allowed on other types. Each entry has:
   - `label` (String, Required) Tab label. Supports markdown links.
-  - `icon` (String, Optional) Emoji shown next to the label. A native Notion icon set in the app reads back as `""`.
+  - `icon` (String, Optional) Emoji shown next to the label. A native Notion icon set in the app reads back as `""`. Notion's API can set or change a tab icon but can't remove it, so removing `icon` from a tab that has one fails before anything is sent. Remove the icon in the Notion app first, then from the config.
   - `id` (String, Read-Only) Block ID of the tab. Use it as `parent_id` for the tab's content.
 
 ### Read-Only

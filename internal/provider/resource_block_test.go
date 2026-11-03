@@ -3,6 +3,7 @@ package provider
 import (
 	"fmt"
 	"os"
+	"regexp"
 	"testing"
 
 	"github.com/hashicorp/terraform-plugin-testing/helper/resource"
@@ -10,13 +11,15 @@ import (
 
 // TestAccBlockHeading4AndTabs covers heading_4 (2026-03-30) and tab blocks
 // with tab item icons (2026-03-25, 2026-03-30), which go over direct HTTP.
-// Steps: create with content inside a tab, then relabel, clear an icon, add
-// a tab, and recolor the heading, then import both, then shrink the tab.
+// Steps: create with content inside a tab, then relabel, change an icon, add
+// a tab, and recolor the heading, then check that removing an icon is
+// refused (the API can't), then import both, then shrink the tab.
 func TestAccBlockHeading4AndTabs(t *testing.T) {
 	parentPageID := os.Getenv("NOTION_TEST_PARENT_PAGE_ID")
 	if parentPageID == "" {
 		t.Skip("NOTION_TEST_PARENT_PAGE_ID not set")
 	}
+	parentPageID = makeIsolatedParentPage(t, notionTestClient(t), "blocks-h4-tabs")
 	title := fmt.Sprintf("tf-acc-test-blocks-h4-tabs-%s", testRunSuffix())
 
 	resource.Test(t, resource.TestCase{
@@ -45,20 +48,30 @@ func TestAccBlockHeading4AndTabs(t *testing.T) {
 			},
 			{
 				Config: testAccBlockHeading4TabsConfig(parentPageID, title, "blue", `[
-    { label = "Overview" },
+    { label = "Overview", icon = "📁" },
     { label = "More details", icon = "🔍" },
     { label = "Notes", icon = "📝" },
   ]`),
 				Check: resource.ComposeAggregateTestCheckFunc(
 					resource.TestCheckResourceAttr("notion_block.h4", "color", "blue"),
 					resource.TestCheckResourceAttr("notion_block.tabs", "tab_items.#", "3"),
-					resource.TestCheckResourceAttr("notion_block.tabs", "tab_items.0.icon", ""),
+					resource.TestCheckResourceAttr("notion_block.tabs", "tab_items.0.icon", "📁"),
 					resource.TestCheckResourceAttr("notion_block.tabs", "tab_items.1.label", "More details"),
 					resource.TestCheckResourceAttr("notion_block.tabs", "tab_items.2.label", "Notes"),
 					resource.TestCheckResourceAttrSet("notion_block.tabs", "tab_items.2.id"),
 					// The content block stays under the first tab, so no replace.
 					resource.TestCheckResourceAttrPair("notion_block.tab_content", "parent_id", "notion_block.tabs", "tab_items.0.id"),
 				),
+			},
+			{
+				// Update a block takes only an icon object, so removing an
+				// icon is refused before anything is sent.
+				Config: testAccBlockHeading4TabsConfig(parentPageID, title, "blue", `[
+    { label = "Overview" },
+    { label = "More details", icon = "🔍" },
+    { label = "Notes", icon = "📝" },
+  ]`),
+				ExpectError: regexp.MustCompile(`can't remove a tab icon`),
 			},
 			{
 				ResourceName:      "notion_block.h4",
@@ -74,7 +87,7 @@ func TestAccBlockHeading4AndTabs(t *testing.T) {
 			},
 			{
 				Config: testAccBlockHeading4TabsConfig(parentPageID, title, "blue", `[
-    { label = "Overview" },
+    { label = "Overview", icon = "📁" },
   ]`),
 				Check: resource.ComposeAggregateTestCheckFunc(
 					resource.TestCheckResourceAttr("notion_block.tabs", "tab_items.#", "1"),

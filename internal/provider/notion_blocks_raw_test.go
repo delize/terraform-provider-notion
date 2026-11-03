@@ -76,12 +76,21 @@ func TestTabBlockShape(t *testing.T) {
 	}
 }
 
-func TestTabItemBodyClearIcon(t *testing.T) {
-	if got := mustJSON(t, tabItemBody(tabItemSpec{Label: "A"}, true)); !strings.Contains(got, `"icon":null`) {
-		t.Errorf("clearIcon should send null: %s", got)
+func TestTabItemBodyIcon(t *testing.T) {
+	if got := mustJSON(t, tabItemBody(tabItemSpec{Label: "A", Icon: "📋"})); !strings.Contains(got, `"icon":{"emoji":"📋","type":"emoji"}`) {
+		t.Errorf("icon object expected: %s", got)
 	}
-	if got := mustJSON(t, tabItemBody(tabItemSpec{Label: "A"}, false)); strings.Contains(got, `"icon"`) {
+	// Notion rejects "icon": null, so an empty icon leaves the key out.
+	if got := mustJSON(t, tabItemBody(tabItemSpec{Label: "A"})); strings.Contains(got, `"icon"`) {
 		t.Errorf("no icon key expected: %s", got)
+	}
+}
+
+func TestTabIconRemovals(t *testing.T) {
+	prior := []tabItemModel{item("a", "One", "📋"), item("b", "Two", "🔍"), item("c", "Three", "")}
+	plan := []tabItemModel{item("a", "One", ""), item("b", "Two", "📝"), item("c", "Three", ""), item("", "Four", "")}
+	if got := strings.Join(tabIconRemovals(prior, plan), ","); got != `"One"` {
+		t.Errorf("removals = %s", got)
 	}
 }
 
@@ -239,7 +248,7 @@ func TestReconcileTabItems(t *testing.T) {
 	})
 
 	prior := []tabItemModel{item("a", "One", ""), item("b", "Two", "🔍"), item("c", "Three", "")}
-	plan := []tabItemModel{item("a", "One", ""), item("b", "Two", ""), item("", "Three!", ""), item("", "Four", "")}
+	plan := []tabItemModel{item("a", "One", ""), item("b", "Two", "📝"), item("", "Three!", ""), item("", "Four", "")}
 	ids, err := reconcileTabItems(context.Background(), token, "tab1", prior, plan)
 	if err != nil {
 		t.Fatal(err)
@@ -250,8 +259,8 @@ func TestReconcileTabItems(t *testing.T) {
 
 	got := strings.Join(f.reqs, "\n")
 	for _, want := range []string{
-		`PATCH /v1/blocks/b {"paragraph":{"icon":null,`,  // icon cleared
-		`PATCH /v1/blocks/c {"paragraph":{"rich_text":[`, // relabeled
+		`PATCH /v1/blocks/b {"paragraph":{"icon":{"emoji":"📝",`, // icon changed
+		`PATCH /v1/blocks/c {"paragraph":{"rich_text":[`,        // relabeled
 		`"content":"Three!"`,
 		`PATCH /v1/blocks/tab1/children {"children":[{"object":"block","paragraph":`,
 		`"content":"Four"`,
