@@ -96,7 +96,7 @@ func (r *PageResource) Schema(_ context.Context, _ resource.SchemaRequest, resp 
 				Description: "The URL of the page.",
 				Computed:    true,
 				PlanModifiers: []planmodifier.String{
-					stringplanmodifier.UseStateForUnknown(),
+					urlFollowsTitle(),
 				},
 			},
 			"icon": schema.StringAttribute{

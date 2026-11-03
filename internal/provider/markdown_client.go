@@ -221,13 +221,7 @@ func (mc *markdownClient) InsertPageMarkdown(ctx context.Context, pageID, markdo
 	}
 
 	url := fmt.Sprintf("https://api.notion.com/v1/pages/%s/markdown", pageID)
-	body := map[string]interface{}{
-		"type": "insert_content",
-		"insert_content": map[string]interface{}{
-			"markdown": markdown,
-			"position": position,
-		},
-	}
+	body := insertContentBody(markdown, position)
 
 	respBody, err := mc.doRequest(ctx, http.MethodPatch, url, body)
 	if err != nil {
@@ -244,4 +238,16 @@ func (mc *markdownClient) InsertPageMarkdown(ctx context.Context, pageID, markdo
 	}
 
 	return &result, nil
+}
+
+// insertContentBody builds the insert_content request. Notion expects the
+// text in `content` and the position as an object such as {"type": "end"}.
+func insertContentBody(markdown, position string) map[string]interface{} {
+	return map[string]interface{}{
+		"type": "insert_content",
+		"insert_content": map[string]interface{}{
+			"content":  markdown,
+			"position": map[string]string{"type": position},
+		},
+	}
 }

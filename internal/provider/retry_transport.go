@@ -39,12 +39,13 @@ import (
 //   - Network/transport errors returned by the underlying RoundTripper
 //     (DNS failure, connection refused, EOF mid-stream, etc.).
 //   - 5xx responses (500, 502, 503, 504, …) regardless of body content.
-//   - 2xx responses with an HTML body (Cloudflare "200 OK" maintenance
-//     pages — rare but observed in production).
+//   - Any response with an HTML body: Cloudflare "200 OK" maintenance
+//     pages, and the 4xx pages Notion's edge serves while throttling an
+//     integration. The API itself only ever answers in JSON.
 //
 // What we do NOT retry
 //
-//   - 4xx other than 429. These are client errors and almost always
+//   - JSON 4xx other than 429. These are client errors and almost always
 //     permanent; retrying would just waste time and surface a confusing
 //     latency profile.
 //   - 429. The jomei SDK already handles these with Retry-After semantics;
@@ -88,7 +89,9 @@ func newRetryHTTPClient() *http.Client {
 	return &http.Client{
 		Transport: &retryTransport{
 			next:       http.DefaultTransport,
-			maxRetries: 5,
+			// Six retries ride out about 30s of edge errors (0.5s doubling
+			// to 16s), well inside the 90s client timeout.
+			maxRetries: 6,
 			baseDelay:  500 * time.Millisecond,
 			maxDelay:   30 * time.Second,
 		},
@@ -153,7 +156,7 @@ func (rt *retryTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 		}
 
 		if isWriteGatewayTimeout(req, resp) || (noReplay(req) && isJSONResponse(resp)) || !shouldRetryResponse(resp) {
-			return resp, nil
+			return edgeErrorAsJSON(resp), nil
 		}
 
 		// Mark for retry; the next iteration drains & closes the body.
@@ -163,7 +166,7 @@ func (rt *retryTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 	// Out of retries — surface the last thing we saw. Either it's a
 	// retryable response we couldn't get past or a network error.
 	if lastResp != nil {
-		return lastResp, nil
+		return edgeErrorAsJSON(lastResp), nil
 	}
 	return nil, lastErr
 }
@@ -195,6 +198,34 @@ func isJSONResponse(resp *http.Response) bool {
 	return strings.HasPrefix(strings.ToLower(resp.Header.Get("Content-Type")), "application/json")
 }
 
+// edgeErrorAsJSON replaces an HTML error page with a JSON Notion error that
+// names the HTTP status. Without it the SDK fails to decode the HTML and
+// reports "invalid character '<' looking for beginning of value", which
+// hides what happened. A 2xx HTML page that survived every retry becomes a
+// 502. JSON responses pass through untouched.
+func edgeErrorAsJSON(resp *http.Response) *http.Response {
+	html := strings.HasPrefix(strings.ToLower(resp.Header.Get("Content-Type")), "text/html")
+	if !html || (resp.StatusCode < 400 && !shouldRetryResponse(resp)) {
+		return resp
+	}
+	drainAndClose(resp)
+	status := resp.StatusCode
+	if status < 400 {
+		status = http.StatusBadGateway
+	}
+	msg := fmt.Sprintf("Notion returned HTTP %d with an HTML page instead of a JSON response. "+
+		"This is usually a temporary problem at Notion's edge, so try again.", resp.StatusCode)
+	body := fmt.Sprintf(`{"object":"error","status":%d,"code":"notion_edge_error","message":%q}`, status, msg)
+	resp.StatusCode = status
+	resp.Status = fmt.Sprintf("%d %s", status, http.StatusText(status))
+	resp.Header = resp.Header.Clone()
+	resp.Header.Set("Content-Type", "application/json")
+	resp.Header.Del("Content-Length")
+	resp.ContentLength = int64(len(body))
+	resp.Body = io.NopCloser(strings.NewReader(body))
+	return resp
+}
+
 // shouldRetryResponse returns true if a response represents a transient
 // failure that's worth retrying. See type comment for the full policy.
 func shouldRetryResponse(resp *http.Response) bool {
@@ -203,10 +234,10 @@ func shouldRetryResponse(resp *http.Response) bool {
 		return true
 	}
 
-	// Cloudflare and other edges occasionally serve HTML maintenance
-	// pages with a 2xx status. Detect those: a Notion API success is
-	// always application/json, so any 2xx HTML body is wrong.
-	if resp.StatusCode >= 200 && resp.StatusCode < 300 {
+	// Notion's API always answers in JSON, so an HTML page never came from
+	// the API itself. Notion's edge serves them as 2xx maintenance pages and
+	// as 4xx pages while it throttles an integration. Retry any of them.
+	if resp.StatusCode >= 200 {
 		ct := resp.Header.Get("Content-Type")
 		if ct != "" && strings.HasPrefix(strings.ToLower(ct), "text/html") {
 			return true

@@ -1,107 +1,125 @@
 name: Tests
 
+# Fork PR acceptance lives in acceptance-fork.yml. Keeping pull_request_target
+# out of this file matters for branch protection: a pull_request_target run
+# posts its own skipped copies of every job here on the PR commit, and GitHub
+# counts a skipped check as passing, so a required "build" check could be
+# satisfied by the skipped duplicate.
 on:
   push:
     branches: [main]
   pull_request:
     branches: [main]
-  # pull_request_target lets us run acceptance with secrets on fork PRs.
-  # Combined with `environment: acceptance` (required reviewers), a maintainer
-  # must approve before secrets are released to PR-controlled code.
-  pull_request_target:
-    branches: [main]
   workflow_dispatch:
+  # Weekly run against main so Notion API drift shows up between PRs.
+  schedule:
+    - cron: '17 6 * * 1'
+
+permissions:
+  contents: read
 
 jobs:
   build:
-    # Skip on pull_request_target to avoid duplicate build runs alongside
-    # pull_request (both fire for the same PR).
-    if: github.event_name != 'pull_request_target'
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
         with:
           go-version-file: go.mod
+      # Unit tests drive real Terraform for plan-only checks.
+      - uses: hashicorp/setup-terraform@v4
+        with:
+          terraform_wrapper: false
       - run: go build ./...
       - run: go vet ./...
+      # Without TF_ACC the acceptance tests skip, so this runs unit tests only.
+      - run: go test ./... -count=1
 
-  # Trusted acceptance: push to main, manual dispatch, and same-repo branch
-  # PRs. Uses repo-level secrets directly without an environment gate.
+  # Trusted acceptance: push to main, schedule, manual dispatch, and same-repo
+  # branch PRs. Uses repo-level secrets directly without an environment gate.
   acceptance:
     if: |
       github.event_name == 'push' ||
+      github.event_name == 'schedule' ||
       github.event_name == 'workflow_dispatch' ||
       (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository)
     runs-on: ubuntu-latest
     needs: build
-    # Non-blocking when matrix.experimental is true. setup-terraform's semver
-    # wildcards don't match pre-release tags, so 1.16 alphas need an explicit
-    # pin and must be bumped manually as new alphas drop.
-    continue-on-error: ${{ matrix.experimental == true }}
+    # Every acceptance leg in every run uses the same Notion workspace, and
+    # Notion rate-limits the integration (about 3 requests a second). This
+    # group runs one leg at a time across the whole repo. queue: max keeps
+    # waiting legs in line instead of cancelling them. Keep the group name in
+    # sync with acceptance-fork.yml.
+    concurrency:
+      group: notion-acceptance-workspace
+      cancel-in-progress: false
+      queue: max
+    # To test a Terraform pre-release without blocking, add a pinned leg
+    # (setup-terraform's wildcards don't match pre-release tags) plus
+    # continue-on-error, in both workflow files:
+    #   continue-on-error: ${{ matrix.experimental == true }}
+    #   matrix:
+    #     include:
+    #       - terraform: '1.18.0-alpha20261105'
+    #         experimental: true
     strategy:
       fail-fast: false
-      # Serialize matrix runs — both versions hit the same Notion workspace
-      # and concurrent runs trip rate limiting / interference.
+      # Serialize matrix runs. Every leg hits the same Notion workspace and
+      # concurrent runs trip rate limiting and interfere with each other.
       max-parallel: 1
+      # Rolling window of the three newest Terraform minors. Keep in sync
+      # with acceptance-fork.yml.
       matrix:
-        terraform: ['1.14.*', '1.15.*']
-        include:
-          - terraform: '1.16.0-alpha20260603'
-            experimental: true
+        terraform: ['1.15.*', '1.16.*', '1.17.*']
     env:
       TF_ACC: "1"
       NOTION_TOKEN: ${{ secrets.NOTION_TOKEN }}
       NOTION_TEST_PARENT_PAGE_ID: ${{ secrets.NOTION_TEST_PARENT_PAGE_ID }}
+      # Optional. Tests that need these skip when the secret is unset.
+      NOTION_TEST_TEMPLATE_ID: ${{ secrets.NOTION_TEST_TEMPLATE_ID }}
+      NOTION_TEST_VIEW_DATABASE_ID: ${{ secrets.NOTION_TEST_VIEW_DATABASE_ID }}
+      NOTION_TEST_VIEW_ID: ${{ secrets.NOTION_TEST_VIEW_ID }}
+      NOTION_TEST_AGENT_ID: ${{ secrets.NOTION_TEST_AGENT_ID }}
       GITHUB_PR_NUMBER: ${{ github.event.pull_request.number }}
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
         with:
           go-version-file: go.mod
-      - uses: hashicorp/setup-terraform@v3
+      - uses: hashicorp/setup-terraform@v4
         with:
           terraform_version: ${{ matrix.terraform }}
           terraform_wrapper: false
       - run: go test ./internal/provider/ -v -timeout 120m
 
-  # Fork PR acceptance: pull_request_target runs in base-branch context with
-  # secret access. The `acceptance` environment's required-reviewer rule gates
-  # secret release until a maintainer approves. We explicitly check out the
-  # PR head so the actual PR code is exercised.
-  acceptance-fork:
-    if: github.event_name == 'pull_request_target' && github.event.pull_request.head.repo.full_name != github.repository
+  # One stable check name for branch protection, so the required checks
+  # don't change every time the Terraform matrix does.
+  acceptance-result:
+    if: always()
+    needs: [build, acceptance]
     runs-on: ubuntu-latest
-    environment: acceptance
-    # Non-blocking when matrix.experimental is true (see comment on the
-    # `acceptance` job for context).
-    continue-on-error: ${{ matrix.experimental == true }}
-    strategy:
-      fail-fast: false
-      # Serialize matrix runs — both versions hit the same Notion workspace
-      # and concurrent runs trip rate limiting / interference.
-      max-parallel: 1
-      matrix:
-        terraform: ['1.14.*', '1.15.*']
-        include:
-          - terraform: '1.16.0-alpha20260603'
-            experimental: true
-    env:
-      TF_ACC: "1"
-      NOTION_TOKEN: ${{ secrets.NOTION_TOKEN }}
-      NOTION_TEST_PARENT_PAGE_ID: ${{ secrets.NOTION_TEST_PARENT_PAGE_ID }}
-      GITHUB_PR_NUMBER: ${{ github.event.pull_request.number }}
     steps:
-      - uses: actions/checkout@v4
-        with:
-          ref: ${{ github.event.pull_request.head.sha }}
-      - uses: actions/setup-go@v5
-        with:
-          go-version-file: go.mod
-      - uses: hashicorp/setup-terraform@v3
-        with:
-          terraform_version: ${{ matrix.terraform }}
-          terraform_wrapper: false
-      - run: go build ./...
-      - run: go vet ./...
-      - run: go test ./internal/provider/ -v -timeout 120m
+      - name: Check build and acceptance outcome
+        env:
+          BUILD: ${{ needs.build.result }}
+          ACCEPTANCE: ${{ needs.acceptance.result }}
+          IS_FORK_PR: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository }}
+        run: |
+          if [ "$BUILD" != "success" ]; then
+            echo "::error::build finished as '$BUILD'"
+            exit 1
+          fi
+          # Fork PRs get no secrets here. Their acceptance runs in the
+          # "Acceptance (fork)" workflow once a maintainer approves the
+          # acceptance environment. This stays red on purpose so a fork PR
+          # can't merge on a skipped run. Merge it with the admin bypass
+          # after the fork workflow is green.
+          if [ "$IS_FORK_PR" = "true" ]; then
+            echo "::error::Fork PR. Approve the 'Acceptance (fork)' run, then merge with the admin bypass once it passes."
+            exit 1
+          fi
+          if [ "$ACCEPTANCE" != "success" ]; then
+            echo "::error::acceptance finished as '$ACCEPTANCE'"
+            exit 1
+          fi
+          echo "build and acceptance passed"

@@ -564,3 +564,58 @@ func TestRetryTransport_NoReplayRetriesDialErrors(t *testing.T) {
 		t.Errorf("attempts after EOF: got %d, want 1", got)
 	}
 }
+
+// An HTML error page reaches the caller as a JSON Notion error with the
+// real status, not as HTML the SDK can't decode.
+func TestRetryTransport_HTMLErrorBecomesJSON(t *testing.T) {
+	cases := []struct {
+		name       string
+		status     int
+		ct         string
+		body       string
+		wantStatus int
+		wantEdge   bool
+	}{
+		{"HTML 502 after retries", 502, "text/html", "<html>502</html>", 502, true},
+		{"HTML 403 after retries", 403, "text/html; charset=utf-8", "<html>blocked</html>", 403, true},
+		{"HTML 400 from a throttling edge after retries", 400, "text/html", "<html>bad request</html>", 400, true},
+		{"HTML 200 after retries becomes 502", 200, "text/html", "<html>maintenance</html>", 502, true},
+		{"JSON 400 passes through", 400, "application/json", `{"object":"error","code":"validation_error"}`, 400, false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			var attempts atomic.Int32
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				attempts.Add(1)
+				w.Header().Set("Content-Type", tc.ct)
+				w.WriteHeader(tc.status)
+				_, _ = w.Write([]byte(tc.body))
+			}))
+			t.Cleanup(srv.Close)
+			resp, err := (&http.Client{Transport: newTestTransport()}).Get(srv.URL)
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			defer resp.Body.Close()
+			b, _ := io.ReadAll(resp.Body)
+			if resp.StatusCode != tc.wantStatus {
+				t.Errorf("status = %d, want %d", resp.StatusCode, tc.wantStatus)
+			}
+			// HTML is retried until the transport gives up, JSON is not.
+			wantAttempts := int32(1)
+			if tc.wantEdge {
+				wantAttempts = int32(newTestTransport().maxRetries + 1)
+			}
+			if got := attempts.Load(); got != wantAttempts {
+				t.Errorf("attempts = %d, want %d", got, wantAttempts)
+			}
+			isEdge := strings.Contains(string(b), `"code":"notion_edge_error"`)
+			if isEdge != tc.wantEdge {
+				t.Errorf("edge error body = %v, want %v: %s", isEdge, tc.wantEdge, b)
+			}
+			if tc.wantEdge && (!strings.Contains(string(b), fmt.Sprintf("HTTP %d", tc.status)) || resp.Header.Get("Content-Type") != "application/json") {
+				t.Errorf("body or content type wrong: %q %s", resp.Header.Get("Content-Type"), b)
+			}
+		})
+	}
+}
