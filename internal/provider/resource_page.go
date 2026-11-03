@@ -145,7 +145,7 @@ func (r *PageResource) Schema(_ context.Context, _ resource.SchemaRequest, resp 
 				Optional: true,
 			},
 			"markdown": schema.StringAttribute{
-				Description: "Page content as enhanced markdown. Mutually exclusive with managing content via notion_block resources. " +
+				Description: "Page content as markdown in the syntax set by markdown_version. Sent again only when it or the version changes. Mutually exclusive with managing content via notion_block resources. " +
 					"Note: Notion may normalize the markdown content, so the stored value may differ slightly from what was submitted.",
 				Optional: true,
 			},

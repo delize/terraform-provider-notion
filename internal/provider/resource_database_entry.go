@@ -83,7 +83,7 @@ func (r *DatabaseEntryResource) Schema(_ context.Context, _ resource.SchemaReque
 				},
 			},
 			"markdown": schema.StringAttribute{
-				Description: "Entry page body content as enhanced markdown. " +
+				Description: "Entry page body content as markdown in the syntax set by markdown_version. Sent again only when it or the version changes. " +
 					"Note: Notion may normalize the markdown content, so the stored value may differ slightly from what was submitted.",
 				Optional: true,
 			},
