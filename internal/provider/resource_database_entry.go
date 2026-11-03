@@ -2,6 +2,7 @@ package provider
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"time"
 
@@ -17,9 +18,10 @@ import (
 )
 
 var (
-	_ resource.Resource                = &DatabaseEntryResource{}
-	_ resource.ResourceWithImportState = &DatabaseEntryResource{}
-	_ resource.ResourceWithModifyPlan  = &DatabaseEntryResource{}
+	_ resource.Resource                   = &DatabaseEntryResource{}
+	_ resource.ResourceWithImportState    = &DatabaseEntryResource{}
+	_ resource.ResourceWithModifyPlan     = &DatabaseEntryResource{}
+	_ resource.ResourceWithValidateConfig = &DatabaseEntryResource{}
 )
 
 type DatabaseEntryResource struct {
@@ -43,6 +45,9 @@ type DatabaseEntryResourceModel struct {
 	EmailProperties       types.Map    `tfsdk:"email_properties"`
 	PhoneNumberProperties types.Map    `tfsdk:"phone_number_properties"`
 	DateProperties        types.Map    `tfsdk:"date_properties"`
+	MultiSelectProperties types.Map    `tfsdk:"multi_select_properties"`
+	RelationProperties    types.Map    `tfsdk:"relation_properties"`
+	PeopleProperties      types.Map    `tfsdk:"people_properties"`
 }
 
 func NewDatabaseEntryResource() resource.Resource {
@@ -132,6 +137,25 @@ func (r *DatabaseEntryResource) Schema(_ context.Context, _ resource.SchemaReque
 				Description: "Map of date property name to ISO 8601 date string.",
 				Optional:    true,
 				ElementType: types.StringType,
+			},
+			"multi_select_properties": schema.MapAttribute{
+				Description: "Map of multi-select property name to the list of selected option names. " +
+					"A name that isn't an option yet is added to the property's options by Notion. " +
+					"An empty list clears the value. At most 100 names per property.",
+				Optional:    true,
+				ElementType: entryListElemType,
+			},
+			"relation_properties": schema.MapAttribute{
+				Description: "Map of relation property name to the list of related page IDs. The list replaces the whole relation. " +
+					"IDs may be given with or without hyphens. An empty list clears the value. At most 100 IDs per property.",
+				Optional:    true,
+				ElementType: entryListElemType,
+			},
+			"people_properties": schema.MapAttribute{
+				Description: "Map of people property name to the list of user IDs. The list replaces the whole value. " +
+					"IDs may be given with or without hyphens. An empty list clears the value. At most 100 IDs per property.",
+				Optional:    true,
+				ElementType: entryListElemType,
 			},
 		},
 	}
@@ -281,6 +305,19 @@ func (r *DatabaseEntryResource) Read(ctx context.Context, req resource.ReadReque
 		if tp, ok := prop.(*notionapi.TitleProperty); ok {
 			state.Title = types.StringValue(richTextToPlain(tp.Title))
 			break
+		}
+	}
+
+	// Relation and people values are capped at 25 in a page response.
+	// Fetch the full list for configured keys that may have been cut off.
+	if needsListExpansion(page, &state) {
+		token, err := tokenForClient(r.client)
+		if err == nil {
+			err = expandTruncatedLists(ctx, token, page, &state)
+		}
+		if err != nil {
+			resp.Diagnostics.AddError("Error reading database entry", err.Error())
+			return
 		}
 	}
 
@@ -493,6 +530,8 @@ func buildEntryProperties(ctx context.Context, plan *DatabaseEntryResourceModel,
 		}
 	}
 
+	buildEntryListProperties(ctx, plan, diags, props)
+
 	return props
 }
 
@@ -626,6 +665,8 @@ func readEntryProperties(page *notionapi.Page, state *DatabaseEntryResourceModel
 		diags.Append(d...)
 		state.DateProperties = m
 	}
+
+	readEntryListProperties(page, state, diags)
 }
 
 // removedKeys returns keys present in stateMap but absent from planMap.
@@ -647,8 +688,23 @@ func removedKeys(stateMap, planMap types.Map) []string {
 	return removed
 }
 
-// clearRemovedProperties sends empty/default values for properties that were
-// in the prior state but are no longer in the plan, so they get cleared in Notion.
+// clearedProperty sends a property value as null, which is how Notion clears
+// a number, select, URL, email, or phone number. The SDK structs can't send
+// null for these, and Notion rejects the "" or 0 they send instead, or keeps
+// 0 as a value.
+type clearedProperty struct {
+	Type notionapi.PropertyType
+}
+
+func (p clearedProperty) GetID() string                   { return "" }
+func (p clearedProperty) GetType() notionapi.PropertyType { return p.Type }
+
+func (p clearedProperty) MarshalJSON() ([]byte, error) {
+	return json.Marshal(map[string]any{"type": p.Type, string(p.Type): nil})
+}
+
+// clearRemovedProperties sends empty values for properties that were in the
+// prior state but are no longer in the plan, so they get cleared in Notion.
 func clearRemovedProperties(state, plan *DatabaseEntryResourceModel, props notionapi.Properties) {
 	for _, name := range removedKeys(state.RichTextProperties, plan.RichTextProperties) {
 		props[name] = notionapi.RichTextProperty{
@@ -657,10 +713,7 @@ func clearRemovedProperties(state, plan *DatabaseEntryResourceModel, props notio
 		}
 	}
 	for _, name := range removedKeys(state.NumberProperties, plan.NumberProperties) {
-		props[name] = notionapi.NumberProperty{
-			Type:   notionapi.PropertyTypeNumber,
-			Number: 0,
-		}
+		props[name] = clearedProperty{Type: notionapi.PropertyTypeNumber}
 	}
 	for _, name := range removedKeys(state.CheckboxProperties, plan.CheckboxProperties) {
 		props[name] = notionapi.CheckboxProperty{
@@ -669,10 +722,7 @@ func clearRemovedProperties(state, plan *DatabaseEntryResourceModel, props notio
 		}
 	}
 	for _, name := range removedKeys(state.SelectProperties, plan.SelectProperties) {
-		props[name] = notionapi.SelectProperty{
-			Type:   notionapi.PropertyTypeSelect,
-			Select: notionapi.Option{},
-		}
+		props[name] = clearedProperty{Type: notionapi.PropertyTypeSelect}
 	}
 	for _, name := range removedKeys(state.StatusProperties, plan.StatusProperties) {
 		props[name] = notionapi.StatusProperty{
@@ -681,22 +731,13 @@ func clearRemovedProperties(state, plan *DatabaseEntryResourceModel, props notio
 		}
 	}
 	for _, name := range removedKeys(state.URLProperties, plan.URLProperties) {
-		props[name] = notionapi.URLProperty{
-			Type: notionapi.PropertyTypeURL,
-			URL:  "",
-		}
+		props[name] = clearedProperty{Type: notionapi.PropertyTypeURL}
 	}
 	for _, name := range removedKeys(state.EmailProperties, plan.EmailProperties) {
-		props[name] = notionapi.EmailProperty{
-			Type:  notionapi.PropertyTypeEmail,
-			Email: "",
-		}
+		props[name] = clearedProperty{Type: notionapi.PropertyTypeEmail}
 	}
 	for _, name := range removedKeys(state.PhoneNumberProperties, plan.PhoneNumberProperties) {
-		props[name] = notionapi.PhoneNumberProperty{
-			Type:        notionapi.PropertyTypePhoneNumber,
-			PhoneNumber: "",
-		}
+		props[name] = clearedProperty{Type: notionapi.PropertyTypePhoneNumber}
 	}
 	for _, name := range removedKeys(state.DateProperties, plan.DateProperties) {
 		props[name] = notionapi.DateProperty{
@@ -704,6 +745,7 @@ func clearRemovedProperties(state, plan *DatabaseEntryResourceModel, props notio
 			Date: nil,
 		}
 	}
+	clearRemovedListProperties(state, plan, props)
 }
 
 // formatNotionDate formats a Notion Date as date-only (2006-01-02) when the time

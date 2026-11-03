@@ -16,7 +16,7 @@ var (
 	_ resource.ResourceWithImportState = &DatabasePropertyBasicResource{}
 )
 
-// DatabasePropertyBasicResource handles the 10 simple property types that have no extra attributes.
+// DatabasePropertyBasicResource handles the 11 simple property types that have no extra attributes.
 type DatabasePropertyBasicResource struct {
 	client       *notionapi.Client
 	typeName     string
@@ -151,6 +151,8 @@ func (r *DatabasePropertyBasicResource) buildPropertyConfig() notionapi.Property
 		return notionapi.URLPropertyConfig{Type: r.propertyType, URL: struct{}{}}
 	case notionapi.PropertyConfigTypeEmail:
 		return notionapi.EmailPropertyConfig{Type: r.propertyType, Email: struct{}{}}
+	case notionapi.PropertyConfigTypePhoneNumber:
+		return notionapi.PhoneNumberPropertyConfig{Type: r.propertyType, PhoneNumber: struct{}{}}
 	case notionapi.PropertyConfigCreatedTime:
 		return notionapi.CreatedTimePropertyConfig{Type: r.propertyType, CreatedTime: struct{}{}}
 	case notionapi.PropertyConfigCreatedBy:

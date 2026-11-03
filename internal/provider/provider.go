@@ -166,6 +166,7 @@ func (p *NotionProvider) Resources(_ context.Context) []func() resource.Resource
 		newDatabasePropertyBasicResource("checkbox", notionapi.PropertyConfigTypeCheckbox),
 		newDatabasePropertyBasicResource("url", notionapi.PropertyConfigTypeURL),
 		newDatabasePropertyBasicResource("email", notionapi.PropertyConfigTypeEmail),
+		newDatabasePropertyBasicResource("phone_number", notionapi.PropertyConfigTypePhoneNumber),
 		newDatabasePropertyBasicResource("created_time", notionapi.PropertyConfigCreatedTime),
 		newDatabasePropertyBasicResource("created_by", notionapi.PropertyConfigCreatedBy),
 		newDatabasePropertyBasicResource("last_edited_time", notionapi.PropertyConfigLastEditedTime),

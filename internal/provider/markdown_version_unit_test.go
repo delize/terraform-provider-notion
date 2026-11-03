@@ -34,6 +34,7 @@ type fakeMarkdownPages struct {
 	trashed  map[string]bool
 	calls    []mdCall
 	creates  []map[string]interface{} // POST /v1/pages bodies
+	updates  []map[string]interface{} // PATCH /v1/pages/{id} bodies
 	warnings []markdownWarning
 }
 
@@ -129,6 +130,7 @@ func (f *fakeMarkdownPages) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	case sub == "" && r.Method == http.MethodGet:
 		reply(200, f.page(id))
 	case sub == "" && r.Method == http.MethodPatch:
+		f.updates = append(f.updates, body)
 		if body["in_trash"] == true {
 			f.trashed[id] = true
 		}
