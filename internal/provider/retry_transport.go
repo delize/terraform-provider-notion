@@ -4,8 +4,8 @@ import (
 	"bytes"
 	"context"
 	"crypto/rand"
-	"encoding/json"
 	"encoding/binary"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -19,7 +19,7 @@ import (
 // retryTransport is an http.RoundTripper that retries transient failures
 // before they reach the Notion API client.
 //
-// Motivation
+// # Motivation
 //
 // The jomei/notionapi SDK retries only on HTTP 429 (Too Many Requests). On
 // any other non-2xx response it reads the body and attempts to JSON-decode
@@ -70,7 +70,7 @@ import (
 //     causes net/http to set GetBody automatically, so this should be
 //     non-issue in practice.
 //
-// Backoff
+// # Backoff
 //
 // Exponential with jitter, capped at maxDelay. If the response carries a
 // Retry-After header, we honour it (capped to maxDelay). 429s, where Notion
@@ -90,7 +90,7 @@ type retryTransport struct {
 func newRetryHTTPClient() *http.Client {
 	return &http.Client{
 		Transport: &retryTransport{
-			next:       http.DefaultTransport,
+			next: http.DefaultTransport,
 			// Six retries ride out about 30s of edge errors (0.5s doubling
 			// to 16s), well inside the 90s client timeout.
 			maxRetries: 6,

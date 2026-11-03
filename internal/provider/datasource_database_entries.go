@@ -193,10 +193,10 @@ func (d *DatabaseEntriesDataSource) Read(ctx context.Context, req datasource.Rea
 // round-trip verbatim. RequestStatus surfaces the 2026-04-20 10K pagination
 // depth cap (type="incomplete", incomplete_reason="query_result_limit_reached").
 type rawQueryResponse struct {
-	Results       []rawPage          `json:"results"`
-	HasMore       bool               `json:"has_more"`
-	NextCursor    string             `json:"next_cursor"`
-	RequestStatus *rawRequestStatus  `json:"request_status,omitempty"`
+	Results       []rawPage         `json:"results"`
+	HasMore       bool              `json:"has_more"`
+	NextCursor    string            `json:"next_cursor"`
+	RequestStatus *rawRequestStatus `json:"request_status,omitempty"`
 }
 
 type rawRequestStatus struct {
@@ -211,28 +211,28 @@ type rawPage struct {
 }
 
 type rawProperty struct {
-	Type        string          `json:"type"`
-	Title       json.RawMessage `json:"title,omitempty"`
-	RichText    json.RawMessage `json:"rich_text,omitempty"`
-	Number      *float64        `json:"number,omitempty"`
-	Select      *rawOption      `json:"select,omitempty"`
-	MultiSelect []rawOption     `json:"multi_select,omitempty"`
-	Date        *rawDate        `json:"date,omitempty"`
-	Checkbox    *bool           `json:"checkbox,omitempty"`
-	URL         *string         `json:"url,omitempty"`
-	Email       *string         `json:"email,omitempty"`
-	PhoneNumber *string         `json:"phone_number,omitempty"`
-	People      []rawUser       `json:"people,omitempty"`
-	Relation    []rawRelation   `json:"relation,omitempty"`
-	Formula     *rawFormula     `json:"formula,omitempty"`
-	Rollup      *rawRollup      `json:"rollup,omitempty"`
-	Status      *rawOption      `json:"status,omitempty"`
-	UniqueID    *rawUniqueID    `json:"unique_id,omitempty"`
-	CreatedTime *string         `json:"created_time,omitempty"`
-	CreatedBy   *rawUser        `json:"created_by,omitempty"`
-	LastEditedTime *string      `json:"last_edited_time,omitempty"`
-	LastEditedBy   *rawUser     `json:"last_edited_by,omitempty"`
-	Files       []rawFile       `json:"files,omitempty"`
+	Type           string          `json:"type"`
+	Title          json.RawMessage `json:"title,omitempty"`
+	RichText       json.RawMessage `json:"rich_text,omitempty"`
+	Number         *float64        `json:"number,omitempty"`
+	Select         *rawOption      `json:"select,omitempty"`
+	MultiSelect    []rawOption     `json:"multi_select,omitempty"`
+	Date           *rawDate        `json:"date,omitempty"`
+	Checkbox       *bool           `json:"checkbox,omitempty"`
+	URL            *string         `json:"url,omitempty"`
+	Email          *string         `json:"email,omitempty"`
+	PhoneNumber    *string         `json:"phone_number,omitempty"`
+	People         []rawUser       `json:"people,omitempty"`
+	Relation       []rawRelation   `json:"relation,omitempty"`
+	Formula        *rawFormula     `json:"formula,omitempty"`
+	Rollup         *rawRollup      `json:"rollup,omitempty"`
+	Status         *rawOption      `json:"status,omitempty"`
+	UniqueID       *rawUniqueID    `json:"unique_id,omitempty"`
+	CreatedTime    *string         `json:"created_time,omitempty"`
+	CreatedBy      *rawUser        `json:"created_by,omitempty"`
+	LastEditedTime *string         `json:"last_edited_time,omitempty"`
+	LastEditedBy   *rawUser        `json:"last_edited_by,omitempty"`
+	Files          []rawFile       `json:"files,omitempty"`
 }
 
 type rawOption struct {

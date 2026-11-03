@@ -350,16 +350,24 @@ func buildBlockUpdateRequest(plan BlockResourceModel) (*notionapi.BlockUpdateReq
 	}
 }
 
-// setRichTextState sets both RichText and RichTextJSON on the state.
-// If the user originally used rich_text_json (non-null in state), serialize to JSON.
-// Otherwise, use richTextToPlain for the markdown-aware round-trip.
+// setRichTextState copies a block's rich text into the state. Without
+// rich_text_json, rich_text gets the markdown-aware plain text.
+//
+// With rich_text_json set, that attribute owns the text. It keeps its prior
+// string when Notion's rich text matches it (see richTextJSONReadback), and
+// rich_text, which is ignored then, keeps its prior value (the "" default
+// unless the config sets it). Writing the plain text into rich_text would
+// differ from the plan and fail the apply.
 func setRichTextState(rt []notionapi.RichText, state *BlockResourceModel) {
-	state.RichText = types.StringValue(richTextToPlain(rt))
-	if !state.RichTextJSON.IsNull() {
-		if j, err := richTextToJSON(rt); err == nil {
-			state.RichTextJSON = types.StringValue(j)
-		}
+	if state.RichTextJSON.IsNull() || state.RichTextJSON.IsUnknown() {
+		state.RichTextJSON = types.StringNull()
+		state.RichText = types.StringValue(richTextToPlain(rt))
+		return
 	}
+	if state.RichText.IsNull() || state.RichText.IsUnknown() {
+		state.RichText = types.StringValue("")
+	}
+	state.RichTextJSON = richTextJSONReadback(state.RichTextJSON, rt)
 }
 
 // readBlockIntoState extracts fields from a concrete SDK block into the flat schema model.

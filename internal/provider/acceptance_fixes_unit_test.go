@@ -54,7 +54,7 @@ func TestViewToStateFillsDatabaseIDFromParent(t *testing.T) {
 		t.Fatal(err)
 	}
 	var state ViewResourceModel
-	(&ViewResource{}).viewToState(&v, &state)
+	(&ViewResource{}).viewToState(&v, &state, nil)
 	if state.DatabaseID.ValueString() != "db1" || state.DataSourceID.ValueString() != "ds1" {
 		t.Fatalf("database_id=%q data_source_id=%q", state.DatabaseID.ValueString(), state.DataSourceID.ValueString())
 	}

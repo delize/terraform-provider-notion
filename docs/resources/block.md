@@ -116,6 +116,10 @@ resource "notion_block" "fancy" {
 }
 ```
 
+Notion answers with more than the request holds. Each item comes back with `plain_text`, `href`, and the full `annotations` object. The provider compares only what a request can set (the type, `text.content`, `text.link.url`, an equation's expression, the mention fields you write, and the annotations), so the string you configured stays in state as written, key order and whitespace included. Annotations you leave out must still be at Notion's defaults, so bold or color added in the Notion app shows as a diff. When the text really differs, state holds Notion's version in request shape, without `plain_text`, `href`, or default annotations. Mention IDs match with or without hyphens, and a date mention matches the same date in another format.
+
+While `rich_text_json` is set, `rich_text` isn't read from Notion and keeps its configured value (`""` unless set). An import can't tell which of the two the config uses, so it fills `rich_text` and leaves `rich_text_json` empty. The first plan after importing a block managed with `rich_text_json` then shows an update that rewrites the same text.
+
 ### Columns
 
 ```terraform
@@ -195,7 +199,7 @@ Tabs are matched by position. Changing a label or icon updates that tab in place
 - `caption` (String) Caption text for code, bookmark, and image blocks.
 - `url` (String) URL for bookmark, embed, and image blocks.
 - `expression` (String) LaTeX expression for equation blocks.
-- `rich_text_json` (String) JSON-encoded array of Notion rich text objects. When set, takes precedence over `rich_text`. See [Notion Rich Text API](https://developers.notion.com/reference/rich-text) for the object format.
+- `rich_text_json` (String) JSON-encoded array of Notion rich text objects. When set, takes precedence over `rich_text`, which then keeps its configured value. Read back by comparing the fields a request sets, so Notion's added `plain_text`, `href`, and default annotations don't show as a diff. See [JSON Rich Text](#json-rich-text-advanced) and [Notion Rich Text API](https://developers.notion.com/reference/rich-text) for the object format.
 - `synced_from` (String) Source block ID for synced block copies. Changing this forces a new resource.
 - `tab_items` (Attributes List) Tabs of a `tab` block, in order. Required for `tab` and not allowed on other types. Each entry has:
   - `label` (String, Required) Tab label. Supports markdown links.

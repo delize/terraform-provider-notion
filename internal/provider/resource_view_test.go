@@ -136,6 +136,103 @@ data "notion_view_query" "test" {
 	})
 }
 
+// TestAccViewJSONAttributes creates a table view with a filter, sorts, a
+// quick filter, and a configuration with property visibility on a new
+// database in an isolated page, then changes each of them. Every step's
+// post-apply plan must be empty, which fails if Notion's copy of any JSON
+// attribute differs from the config in a way the provider doesn't treat as
+// the same value. The filter and sorts name properties ("Priority",
+// "Name"), which Notion answers with property IDs, and Notion lists every
+// property in the table configuration. The provider matches both through
+// the data source schema.
+func TestAccViewJSONAttributes(t *testing.T) {
+	if os.Getenv("NOTION_TOKEN") == "" {
+		t.Skip("NOTION_TOKEN not set")
+	}
+	parentID := makeIsolatedParentPage(t, notionTestClient(t), "view-json")
+
+	const addr = "notion_view.v"
+	resource.Test(t, resource.TestCase{
+		ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
+		CheckDestroy:             testAccCheckResourcesTrashed(t),
+		Steps: []resource.TestStep{
+			{
+				Config: testAccViewJSONConfig(parentID, "High", "ascending", true),
+				Check: resource.ComposeAggregateTestCheckFunc(
+					resource.TestCheckResourceAttr(addr, "filter", `{"property":"Priority","select":{"equals":"High"}}`),
+					resource.TestCheckResourceAttr(addr, "sorts", `[{"direction":"ascending","property":"Name"},{"direction":"descending","property":"Priority"}]`),
+					resource.TestCheckResourceAttr(addr, "quick_filters", `{"title":{}}`),
+					resource.TestCheckResourceAttr(addr, "configuration",
+						`{"properties":[{"property_id":"title","visible":true,"width":320}],"type":"table","wrap_cells":true}`),
+				),
+			},
+			{
+				Config: testAccViewJSONConfig(parentID, "Low", "descending", false),
+				Check: resource.ComposeAggregateTestCheckFunc(
+					resource.TestCheckResourceAttr(addr, "filter", `{"property":"Priority","select":{"equals":"Low"}}`),
+					resource.TestCheckResourceAttr(addr, "configuration",
+						`{"properties":[{"property_id":"title","visible":true,"width":320}],"type":"table","wrap_cells":false}`),
+				),
+			},
+			{
+				ResourceName:      addr,
+				ImportState:       true,
+				ImportStateVerify: true,
+				// Notion returns configuration fields the config doesn't set,
+				// and property IDs where the config names properties. The
+				// provider matches those only against a config.
+				ImportStateVerifyIgnore: []string{"configuration", "filter", "sorts"},
+			},
+		},
+	})
+}
+
+func testAccViewJSONConfig(parentID, priority, nameDirection string, wrapCells bool) string {
+	return fmt.Sprintf(`
+resource "notion_database" "db" {
+  parent             = %q
+  title              = "View JSON attributes"
+  title_column_title = "Name"
+}
+
+resource "notion_database_property_select" "priority" {
+  database = notion_database.db.id
+  name     = "Priority"
+  options = {
+    "High" = "red"
+    "Low"  = "gray"
+  }
+}
+
+resource "notion_view" "v" {
+  database_id    = notion_database.db.id
+  data_source_id = notion_database.db.data_source_ids[0]
+  name           = "Open work"
+  type           = "table"
+
+  filter = jsonencode({
+    property = "Priority"
+    select   = { equals = %q }
+  })
+
+  sorts = jsonencode([
+    { property = "Name", direction = %q },
+    { property = "Priority", direction = "descending" },
+  ])
+
+  quick_filters = jsonencode({ title = {} })
+
+  configuration = jsonencode({
+    type       = "table"
+    properties = [{ property_id = "title", visible = true, width = 320 }]
+    wrap_cells = %t
+  })
+
+  depends_on = [notion_database_property_select.priority]
+}
+`, parentID, priority, nameDirection, wrapCells)
+}
+
 func testAccViewConfig(databaseID, dataSourceID, name, viewType string) string {
 	return fmt.Sprintf(`
 resource "notion_view" "test" {

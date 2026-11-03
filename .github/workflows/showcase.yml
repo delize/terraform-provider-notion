@@ -1,0 +1,103 @@
+name: Showcase
+
+# Builds examples/showcase in the test workspace with the real terraform CLI
+# and leaves it in place to inspect. Each run trashes the previous showcase
+# first. No state is kept between runs.
+on:
+  workflow_dispatch:
+  push:
+    tags: ['v*']
+  pull_request:
+    branches: [main]
+    paths:
+      - 'examples/showcase/**'
+      - '.github/workflows/showcase.yml'
+      - 'scripts/showcase_cleanup.py'
+
+permissions:
+  contents: read
+
+jobs:
+  showcase:
+    # Same-repo PRs only. Fork PRs get no secrets here.
+    if: |
+      github.event_name != 'pull_request' ||
+      github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    # Shares the acceptance tests' group, so it never talks to the Notion
+    # workspace at the same time as an acceptance leg. Keep in sync with
+    # test.yml and acceptance-fork.yml.
+    concurrency:
+      group: notion-acceptance-workspace
+      cancel-in-progress: false
+      queue: max
+    env:
+      NOTION_TOKEN: ${{ secrets.NOTION_TOKEN }}
+      TF_VAR_parent_page_id: ${{ secrets.NOTION_TEST_PARENT_PAGE_ID }}
+      # Optional. An empty value skips the template page.
+      TF_VAR_template_id: ${{ secrets.NOTION_TEST_TEMPLATE_ID }}
+      TF_VAR_run_label: run ${{ github.run_number }}, ${{ github.ref_name }}
+      # notion_page searches by title, and a page created during the apply
+      # may not be indexed yet, so the lookup targets the long-lived parent.
+      TF_VAR_lookup_page_query: Terraform acceptance tests
+      TF_IN_AUTOMATION: "1"
+      TF_INPUT: "0"
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+      - uses: hashicorp/setup-terraform@v4
+        with:
+          terraform_wrapper: false
+
+      - name: Build the provider and point Terraform at it
+        run: |
+          bin_dir="$RUNNER_TEMP/provider-bin"
+          mkdir -p "$bin_dir"
+          go build -o "$bin_dir/terraform-provider-notion" .
+          cat > "$RUNNER_TEMP/dev.tfrc" <<EOF
+          provider_installation {
+            dev_overrides {
+              "delize/notion" = "$bin_dir"
+            }
+            direct {}
+          }
+          EOF
+          echo "TF_CLI_CONFIG_FILE=$RUNNER_TEMP/dev.tfrc" >> "$GITHUB_ENV"
+
+      - name: Trash the previous showcase
+        run: python3 scripts/showcase_cleanup.py
+
+      # dev_overrides serves the only provider this config uses, so there is
+      # nothing for terraform init to install.
+      - name: Apply
+        id: apply
+        working-directory: examples/showcase
+        run: terraform apply -auto-approve -parallelism=4
+
+      - name: Plan again and fail on drift
+        working-directory: examples/showcase
+        run: |
+          set +e
+          terraform plan -detailed-exitcode -parallelism=4
+          code=$?
+          set -e
+          if [ "$code" -eq 2 ]; then
+            echo "::error::The plan after apply is not empty. Some attribute drifts."
+            exit 1
+          fi
+          exit "$code"
+
+      - name: Write the job summary
+        if: always() && steps.apply.outcome == 'success'
+        working-directory: examples/showcase
+        run: |
+          url=$(terraform output -raw showcase_url)
+          count=$(terraform state list | grep -vc '^data\.' || true)
+          {
+            echo "## Provider showcase"
+            echo
+            echo "- Page: $url"
+            echo "- Managed resources: $count"
+          } >> "$GITHUB_STEP_SUMMARY"

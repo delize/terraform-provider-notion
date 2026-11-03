@@ -104,9 +104,9 @@ func (r *PageResource) Schema(_ context.Context, _ resource.SchemaRequest, resp 
 			"icon": schema.StringAttribute{
 				Description: "Emoji icon for the page. Defaults to an empty string, so an emoji set in the Notion UI is removed on the next apply unless it's configured here. " +
 					"Conflicts with icon_name, icon_url, and icon_custom_emoji_id.",
-				Optional:    true,
-				Computed:    true,
-				Default:     stringdefault.StaticString(""),
+				Optional: true,
+				Computed: true,
+				Default:  stringdefault.StaticString(""),
 			},
 			"icon_name": schema.StringAttribute{
 				Description: "Native Notion icon name, such as `pizza` (2026-03-25). Notion returns its internal icon name, " +
