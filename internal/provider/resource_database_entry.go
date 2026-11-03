@@ -2,6 +2,7 @@ package provider
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"time"
 
@@ -687,8 +688,23 @@ func removedKeys(stateMap, planMap types.Map) []string {
 	return removed
 }
 
-// clearRemovedProperties sends empty/default values for properties that were
-// in the prior state but are no longer in the plan, so they get cleared in Notion.
+// clearedProperty sends a property value as null, which is how Notion clears
+// a number, select, URL, email, or phone number. The SDK structs can't send
+// null for these, and Notion rejects the "" or 0 they send instead, or keeps
+// 0 as a value.
+type clearedProperty struct {
+	Type notionapi.PropertyType
+}
+
+func (p clearedProperty) GetID() string                   { return "" }
+func (p clearedProperty) GetType() notionapi.PropertyType { return p.Type }
+
+func (p clearedProperty) MarshalJSON() ([]byte, error) {
+	return json.Marshal(map[string]any{"type": p.Type, string(p.Type): nil})
+}
+
+// clearRemovedProperties sends empty values for properties that were in the
+// prior state but are no longer in the plan, so they get cleared in Notion.
 func clearRemovedProperties(state, plan *DatabaseEntryResourceModel, props notionapi.Properties) {
 	for _, name := range removedKeys(state.RichTextProperties, plan.RichTextProperties) {
 		props[name] = notionapi.RichTextProperty{
@@ -697,10 +713,7 @@ func clearRemovedProperties(state, plan *DatabaseEntryResourceModel, props notio
 		}
 	}
 	for _, name := range removedKeys(state.NumberProperties, plan.NumberProperties) {
-		props[name] = notionapi.NumberProperty{
-			Type:   notionapi.PropertyTypeNumber,
-			Number: 0,
-		}
+		props[name] = clearedProperty{Type: notionapi.PropertyTypeNumber}
 	}
 	for _, name := range removedKeys(state.CheckboxProperties, plan.CheckboxProperties) {
 		props[name] = notionapi.CheckboxProperty{
@@ -709,10 +722,7 @@ func clearRemovedProperties(state, plan *DatabaseEntryResourceModel, props notio
 		}
 	}
 	for _, name := range removedKeys(state.SelectProperties, plan.SelectProperties) {
-		props[name] = notionapi.SelectProperty{
-			Type:   notionapi.PropertyTypeSelect,
-			Select: notionapi.Option{},
-		}
+		props[name] = clearedProperty{Type: notionapi.PropertyTypeSelect}
 	}
 	for _, name := range removedKeys(state.StatusProperties, plan.StatusProperties) {
 		props[name] = notionapi.StatusProperty{
@@ -721,22 +731,13 @@ func clearRemovedProperties(state, plan *DatabaseEntryResourceModel, props notio
 		}
 	}
 	for _, name := range removedKeys(state.URLProperties, plan.URLProperties) {
-		props[name] = notionapi.URLProperty{
-			Type: notionapi.PropertyTypeURL,
-			URL:  "",
-		}
+		props[name] = clearedProperty{Type: notionapi.PropertyTypeURL}
 	}
 	for _, name := range removedKeys(state.EmailProperties, plan.EmailProperties) {
-		props[name] = notionapi.EmailProperty{
-			Type:  notionapi.PropertyTypeEmail,
-			Email: "",
-		}
+		props[name] = clearedProperty{Type: notionapi.PropertyTypeEmail}
 	}
 	for _, name := range removedKeys(state.PhoneNumberProperties, plan.PhoneNumberProperties) {
-		props[name] = notionapi.PhoneNumberProperty{
-			Type:        notionapi.PropertyTypePhoneNumber,
-			PhoneNumber: "",
-		}
+		props[name] = clearedProperty{Type: notionapi.PropertyTypePhoneNumber}
 	}
 	for _, name := range removedKeys(state.DateProperties, plan.DateProperties) {
 		props[name] = notionapi.DateProperty{
