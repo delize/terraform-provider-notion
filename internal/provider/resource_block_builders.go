@@ -7,11 +7,6 @@ import (
 	"github.com/jomei/notionapi"
 )
 
-func emojiPtr(s string) *notionapi.Emoji {
-	e := notionapi.Emoji(s)
-	return &e
-}
-
 // resolveRichText returns RichText from rich_text_json if set, otherwise from rich_text with markdown link parsing.
 func resolveRichText(plan BlockResourceModel) ([]notionapi.RichText, error) {
 	if !plan.RichTextJSON.IsNull() && !plan.RichTextJSON.IsUnknown() {
@@ -115,22 +110,6 @@ func buildBlockForCreate(plan BlockResourceModel) (notionapi.Block, error) {
 			},
 		}, nil
 
-	case "callout":
-		block := &notionapi.CalloutBlock{
-			BasicBlock: notionapi.BasicBlock{Object: notionapi.ObjectTypeBlock, Type: notionapi.BlockCallout},
-			Callout: notionapi.Callout{
-				RichText: rt,
-				Color:    plan.Color.ValueString(),
-			},
-		}
-		if !plan.Icon.IsNull() && !plan.Icon.IsUnknown() && plan.Icon.ValueString() != "" {
-			block.Callout.Icon = &notionapi.Icon{
-				Type:  "emoji",
-				Emoji: emojiPtr(plan.Icon.ValueString()),
-			}
-		}
-		return block, nil
-
 	case "code":
 		block := &notionapi.CodeBlock{
 			BasicBlock: notionapi.BasicBlock{Object: notionapi.ObjectTypeBlock, Type: notionapi.BlockTypeCode},
@@ -223,9 +202,10 @@ func buildBlockForCreate(plan BlockResourceModel) (notionapi.Block, error) {
 			Column:     notionapi.Column{},
 		}, nil
 
-	case "heading_4", "tab":
-		// The SDK doesn't model these. resource_block_raw.go creates them
-		// over direct HTTP, so reaching this is a provider bug.
+	case "heading_4", "tab", "callout":
+		// The SDK doesn't model these (or, for callout, its icon union).
+		// resource_block_raw.go creates them over direct HTTP, so reaching
+		// this is a provider bug.
 		return nil, fmt.Errorf("block type %q is built by the direct HTTP path, not the SDK builder", blockType)
 
 	default:
@@ -318,19 +298,6 @@ func buildBlockUpdateRequest(plan BlockResourceModel) (*notionapi.BlockUpdateReq
 				Color:    blockColorForUpdate(plan.Color),
 			},
 		}, nil
-
-	case "callout":
-		callout := &notionapi.Callout{
-			RichText: rt,
-			Color:    blockColorForUpdate(plan.Color),
-		}
-		if !plan.Icon.IsNull() && !plan.Icon.IsUnknown() && plan.Icon.ValueString() != "" {
-			callout.Icon = &notionapi.Icon{
-				Type:  "emoji",
-				Emoji: emojiPtr(plan.Icon.ValueString()),
-			}
-		}
-		return &notionapi.BlockUpdateRequest{Callout: callout}, nil
 
 	case "code":
 		code := &notionapi.Code{
@@ -457,13 +424,6 @@ func readBlockIntoState(block notionapi.Block, state *BlockResourceModel) {
 	case *notionapi.QuoteBlock:
 		setRichTextState(b.Quote.RichText, state)
 		state.Color = types.StringValue(normalizeBlockColor(b.Quote.Color, priorColor))
-
-	case *notionapi.CalloutBlock:
-		setRichTextState(b.Callout.RichText, state)
-		state.Color = types.StringValue(normalizeBlockColor(b.Callout.Color, priorColor))
-		if b.Callout.Icon != nil && b.Callout.Icon.Emoji != nil {
-			state.Icon = types.StringValue(string(*b.Callout.Icon.Emoji))
-		}
 
 	case *notionapi.CodeBlock:
 		setRichTextState(b.Code.RichText, state)

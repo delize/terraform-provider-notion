@@ -1,12 +1,14 @@
 package provider
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"regexp"
 	"testing"
 
 	"github.com/hashicorp/terraform-plugin-testing/helper/resource"
+	"github.com/hashicorp/terraform-plugin-testing/terraform"
 )
 
 // TestAccBlockHeading4AndTabs covers heading_4 (2026-03-30) and tab blocks
@@ -196,4 +198,113 @@ resource "notion_block" "explicit" {
   color     = "default"
 }
 `, parentPageID, colorLine)
+}
+
+// TestAccBlockCalloutIcons walks a callout through a native icon
+// (2026-03-25), then an emoji with a color, then checks that removing the
+// icon is refused (the API can't), then imports it, then clears the color
+// while keeping the emoji. The callout sits in an isolated page that
+// cleanup trashes.
+func TestAccBlockCalloutIcons(t *testing.T) {
+	if os.Getenv("NOTION_TOKEN") == "" {
+		t.Skip("NOTION_TOKEN not set")
+	}
+	parentID := makeIsolatedParentPage(t, notionTestClient(t), "callout-icons")
+
+	const addr = "notion_block.callout"
+	resource.Test(t, resource.TestCase{
+		ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
+		Steps: []resource.TestStep{
+			{
+				Config: testAccBlockCalloutConfig(parentID, `
+  icon_name  = "pizza"
+  icon_color = "blue"`),
+				Check: resource.ComposeAggregateTestCheckFunc(
+					resource.TestCheckResourceAttr(addr, "type", "callout"),
+					resource.TestCheckResourceAttr(addr, "rich_text", "Callout with an icon"),
+					resource.TestCheckResourceAttr(addr, "icon_name", "pizza"),
+					resource.TestCheckResourceAttr(addr, "icon_color", "blue"),
+					resource.TestCheckResourceAttr(addr, "icon", ""),
+					resource.TestCheckResourceAttr(addr, "color", ""),
+				),
+			},
+			{
+				Config: testAccBlockCalloutConfig(parentID, `
+  icon  = "💡"
+  color = "yellow_background"`),
+				Check: resource.ComposeAggregateTestCheckFunc(
+					resource.TestCheckNoResourceAttr(addr, "icon_name"),
+					resource.TestCheckNoResourceAttr(addr, "icon_color"),
+					resource.TestCheckResourceAttr(addr, "icon", "💡"),
+					resource.TestCheckResourceAttr(addr, "color", "yellow_background"),
+				),
+			},
+			{
+				// Update a block takes only an icon object, so removing the
+				// icon is refused before anything is sent.
+				Config:      testAccBlockCalloutConfig(parentID, ""),
+				ExpectError: regexp.MustCompile(`can't remove a callout icon`),
+			},
+			{
+				Config:            testAccBlockCalloutConfig(parentID, `  icon = "💡"`),
+				ResourceName:      addr,
+				ImportState:       true,
+				ImportStateVerify: true,
+			},
+			{
+				Config: testAccBlockCalloutConfig(parentID, `  icon = "💡"`),
+				Check: resource.ComposeAggregateTestCheckFunc(
+					resource.TestCheckResourceAttr(addr, "icon", "💡"),
+					resource.TestCheckResourceAttr(addr, "color", ""),
+				),
+			},
+		},
+	})
+}
+
+// TestAccBlockCalloutNoIcon creates a callout with no icon attribute at all.
+// The step's post-apply plan check proves it plans nothing afterwards,
+// whatever default icon Notion gives it. The icon Notion reports is logged,
+// so the run shows whether the API adds a default.
+func TestAccBlockCalloutNoIcon(t *testing.T) {
+	token := os.Getenv("NOTION_TOKEN")
+	if token == "" {
+		t.Skip("NOTION_TOKEN not set")
+	}
+	parentID := makeIsolatedParentPage(t, notionTestClient(t), "callout-no-icon")
+
+	const addr = "notion_block.callout"
+	resource.Test(t, resource.TestCase{
+		ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
+		Steps: []resource.TestStep{
+			{
+				Config: testAccBlockCalloutConfig(parentID, ""),
+				Check: resource.ComposeAggregateTestCheckFunc(
+					resource.TestCheckResourceAttr(addr, "icon", ""),
+					resource.TestCheckNoResourceAttr(addr, "icon_name"),
+					logAttr(t, addr, "icon"),
+					func(s *terraform.State) error {
+						id := s.RootModule().Resources[addr].Primary.ID
+						b, err := getBlockRaw(context.Background(), token, id)
+						if err != nil {
+							return err
+						}
+						t.Logf("Notion reports this icon on a callout created without one: %+v (raw %s)", b.Callout.icon(), string(b.Callout.Icon))
+						return nil
+					},
+				),
+			},
+		},
+	})
+}
+
+func testAccBlockCalloutConfig(parentID, extra string) string {
+	return fmt.Sprintf(`
+resource "notion_block" "callout" {
+  parent_id = %q
+  type      = "callout"
+  rich_text = "Callout with an icon"
+%s
+}
+`, parentID, extra)
 }

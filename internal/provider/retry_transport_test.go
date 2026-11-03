@@ -619,3 +619,54 @@ func TestRetryTransport_HTMLErrorBecomesJSON(t *testing.T) {
 		})
 	}
 }
+
+// Notion rolls back a conflicting transaction, so a 409 conflict_error is
+// retried even for a create marked withNoReplay. Other 409s are not.
+func TestRetryTransport_RetriesConflictError(t *testing.T) {
+	cases := []struct {
+		name         string
+		code         string
+		marked       bool
+		wantAttempts int32
+		wantStatus   int
+	}{
+		{"conflict on a marked create retries", "conflict_error", true, 3, 200},
+		{"conflict on an unmarked write retries", "conflict_error", false, 3, 200},
+		{"other 409 is returned", "something_else", false, 1, 409},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			var attempts atomic.Int32
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				if attempts.Add(1) < 3 {
+					w.WriteHeader(http.StatusConflict)
+					_, _ = w.Write([]byte(`{"object":"error","status":409,"code":"` + tc.code + `","message":"Conflict occurred while saving. Please try again."}`))
+					return
+				}
+				_, _ = w.Write([]byte(`{"object":"list","results":[]}`))
+			}))
+			t.Cleanup(srv.Close)
+			ctx := context.Background()
+			if tc.marked {
+				ctx = withNoReplay(ctx)
+			}
+			req, _ := http.NewRequestWithContext(ctx, http.MethodPatch, srv.URL, strings.NewReader(`{"children":[]}`))
+			resp, err := (&http.Client{Transport: newTestTransport()}).Do(req)
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			defer resp.Body.Close()
+			b, _ := io.ReadAll(resp.Body)
+			if got := attempts.Load(); got != tc.wantAttempts {
+				t.Errorf("attempts = %d, want %d", got, tc.wantAttempts)
+			}
+			if resp.StatusCode != tc.wantStatus {
+				t.Errorf("status = %d, want %d (%s)", resp.StatusCode, tc.wantStatus, b)
+			}
+			if tc.wantStatus == 409 && !strings.Contains(string(b), tc.code) {
+				t.Errorf("409 body was not passed through intact: %s", b)
+			}
+		})
+	}
+}
