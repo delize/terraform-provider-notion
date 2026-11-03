@@ -34,12 +34,13 @@ import (
 //   - Network/transport errors returned by the underlying RoundTripper
 //     (DNS failure, connection refused, EOF mid-stream, etc.).
 //   - 5xx responses (500, 502, 503, 504, …) regardless of body content.
-//   - 2xx responses with an HTML body (Cloudflare "200 OK" maintenance
-//     pages — rare but observed in production).
+//   - Any response with an HTML body: Cloudflare "200 OK" maintenance
+//     pages, and the 4xx pages Notion's edge serves while throttling an
+//     integration. The API itself only ever answers in JSON.
 //
 // What we do NOT retry
 //
-//   - 4xx other than 429. These are client errors and almost always
+//   - JSON 4xx other than 429. These are client errors and almost always
 //     permanent; retrying would just waste time and surface a confusing
 //     latency profile.
 //   - 429. The jomei SDK already handles these with Retry-After semantics;
@@ -183,10 +184,10 @@ func shouldRetryResponse(resp *http.Response) bool {
 		return true
 	}
 
-	// Cloudflare and other edges occasionally serve HTML maintenance
-	// pages with a 2xx status. Detect those: a Notion API success is
-	// always application/json, so any 2xx HTML body is wrong.
-	if resp.StatusCode >= 200 && resp.StatusCode < 300 {
+	// Notion's API always answers in JSON, so an HTML page never came from
+	// the API itself. Notion's edge serves them as 2xx maintenance pages and
+	// as 4xx pages while it throttles an integration. Retry any of them.
+	if resp.StatusCode >= 200 {
 		ct := resp.Header.Get("Content-Type")
 		if ct != "" && strings.HasPrefix(strings.ToLower(ct), "text/html") {
 			return true

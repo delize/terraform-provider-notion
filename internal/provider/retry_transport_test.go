@@ -407,13 +407,16 @@ func TestRetryTransport_HTMLErrorBecomesJSON(t *testing.T) {
 		wantEdge   bool
 	}{
 		{"HTML 502 after retries", 502, "text/html", "<html>502</html>", 502, true},
-		{"HTML 403 is not retried but explained", 403, "text/html; charset=utf-8", "<html>blocked</html>", 403, true},
+		{"HTML 403 after retries", 403, "text/html; charset=utf-8", "<html>blocked</html>", 403, true},
+		{"HTML 400 from a throttling edge after retries", 400, "text/html", "<html>bad request</html>", 400, true},
 		{"HTML 200 after retries becomes 502", 200, "text/html", "<html>maintenance</html>", 502, true},
 		{"JSON 400 passes through", 400, "application/json", `{"object":"error","code":"validation_error"}`, 400, false},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
+			var attempts atomic.Int32
 			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				attempts.Add(1)
 				w.Header().Set("Content-Type", tc.ct)
 				w.WriteHeader(tc.status)
 				_, _ = w.Write([]byte(tc.body))
@@ -427,6 +430,14 @@ func TestRetryTransport_HTMLErrorBecomesJSON(t *testing.T) {
 			b, _ := io.ReadAll(resp.Body)
 			if resp.StatusCode != tc.wantStatus {
 				t.Errorf("status = %d, want %d", resp.StatusCode, tc.wantStatus)
+			}
+			// HTML is retried until the transport gives up, JSON is not.
+			wantAttempts := int32(1)
+			if tc.wantEdge {
+				wantAttempts = int32(newTestTransport().maxRetries + 1)
+			}
+			if got := attempts.Load(); got != wantAttempts {
+				t.Errorf("attempts = %d, want %d", got, wantAttempts)
 			}
 			isEdge := strings.Contains(string(b), `"code":"notion_edge_error"`)
 			if isEdge != tc.wantEdge {
