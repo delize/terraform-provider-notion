@@ -308,3 +308,88 @@ resource "notion_block" "callout" {
 }
 `, parentID, extra)
 }
+
+// TestAccBlockRichTextJSON creates blocks from rich_text_json with bold
+// text and a link, on the SDK path (paragraph, heading_2) and over direct
+// HTTP (heading_4, callout). Notion answers with plain_text, href, and full
+// annotations, which used to fail the apply with an inconsistent result.
+// Each step's post-apply plan must be empty. The update step changes the
+// text, and the import step reads the heading_4 back.
+func TestAccBlockRichTextJSON(t *testing.T) {
+	if os.Getenv("NOTION_TOKEN") == "" {
+		t.Skip("NOTION_TOKEN not set")
+	}
+	parentID := makeIsolatedParentPage(t, notionTestClient(t), "rich-text-json")
+
+	resource.Test(t, resource.TestCase{
+		ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
+		Steps: []resource.TestStep{
+			{
+				Config: testAccBlockRichTextJSONConfig(parentID, "rich text reference"),
+				Check: resource.ComposeAggregateTestCheckFunc(
+					resource.TestCheckResourceAttr("notion_block.p", "rich_text", ""),
+					resource.TestCheckResourceAttr("notion_block.h2", "rich_text", ""),
+					resource.TestCheckResourceAttr("notion_block.h4", "rich_text", ""),
+					resource.TestCheckResourceAttr("notion_block.callout", "rich_text", ""),
+					resource.TestCheckResourceAttrPair("notion_block.p", "rich_text_json", "notion_block.h2", "rich_text_json"),
+				),
+			},
+			{
+				Config: testAccBlockRichTextJSONConfig(parentID, "rich text object"),
+			},
+			{
+				ResourceName:      "notion_block.h4",
+				ImportState:       true,
+				ImportStateVerify: true,
+				// An import can't tell rich_text_json was used, so it fills
+				// rich_text from Notion's text instead. after is a
+				// create-time placement hint the API doesn't return.
+				ImportStateVerifyIgnore: []string{"rich_text", "rich_text_json", "after"},
+			},
+		},
+	})
+}
+
+func testAccBlockRichTextJSONConfig(parentID, linkText string) string {
+	return fmt.Sprintf(`
+locals {
+  rich = jsonencode([
+    { type = "text", text = { content = "Read the " } },
+    {
+      type        = "text"
+      text        = { content = %[2]q, link = { url = "https://developers.notion.com/reference/rich-text" } }
+      annotations = { bold = true }
+    },
+    { type = "text", text = { content = " before writing JSON." }, annotations = { italic = true, color = "gray" } },
+  ])
+}
+
+resource "notion_block" "p" {
+  parent_id      = %[1]q
+  type           = "paragraph"
+  rich_text_json = local.rich
+}
+
+resource "notion_block" "h2" {
+  parent_id      = %[1]q
+  type           = "heading_2"
+  after          = notion_block.p.id
+  rich_text_json = local.rich
+}
+
+resource "notion_block" "h4" {
+  parent_id      = %[1]q
+  type           = "heading_4"
+  after          = notion_block.h2.id
+  rich_text_json = local.rich
+}
+
+resource "notion_block" "callout" {
+  parent_id      = %[1]q
+  type           = "callout"
+  after          = notion_block.h4.id
+  icon           = "💡"
+  rich_text_json = local.rich
+}
+`, parentID, linkText)
+}
