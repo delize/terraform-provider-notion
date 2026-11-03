@@ -69,7 +69,7 @@ func (mc *markdownClient) CreatePageWithMarkdown(ctx context.Context, parentPage
 		"markdown": markdown,
 	}
 
-	respBody, err := mc.doRequest(withNoReplay(ctx), http.MethodPost, "https://api.notion.com/v1/pages", body)
+	respBody, err := mc.doRequest(withNoReplay(ctx), http.MethodPost, notionAPIBaseURL+"/pages", body)
 	if err != nil {
 		return nil, err
 	}
@@ -110,7 +110,7 @@ func (mc *markdownClient) CreatePageWithMarkdownAndTitle(ctx context.Context, pa
 		body["position"] = position
 	}
 
-	respBody, err := mc.doRequest(withNoReplay(ctx), http.MethodPost, "https://api.notion.com/v1/pages", body)
+	respBody, err := mc.doRequest(withNoReplay(ctx), http.MethodPost, notionAPIBaseURL+"/pages", body)
 	if err != nil {
 		return "", "", err
 	}
@@ -134,7 +134,7 @@ func (mc *markdownClient) CreateDatabaseEntryWithMarkdown(ctx context.Context, d
 		"properties": properties,
 	}
 
-	respBody, err := mc.doRequest(withNoReplay(ctx), http.MethodPost, "https://api.notion.com/v1/pages", body)
+	respBody, err := mc.doRequest(withNoReplay(ctx), http.MethodPost, notionAPIBaseURL+"/pages", body)
 	if err != nil {
 		return "", "", err
 	}
@@ -188,7 +188,7 @@ func pageMarkdownURL(pageID string, includeTranscript bool) string {
 
 // ReplacePageMarkdown replaces all content in a page with new markdown.
 func (mc *markdownClient) ReplacePageMarkdown(ctx context.Context, pageID, markdown string) (*PageMarkdownResponse, error) {
-	url := fmt.Sprintf("https://api.notion.com/v1/pages/%s/markdown", pageID)
+	url := fmt.Sprintf("%s/pages/%s/markdown", notionAPIBaseURL, pageID)
 
 	body := map[string]interface{}{
 		"type": "replace_content",
@@ -223,7 +223,7 @@ func (mc *markdownClient) InsertPageMarkdown(ctx context.Context, pageID, markdo
 		return nil, fmt.Errorf("InsertPageMarkdown: position must be \"start\" or \"end\", got %q", position)
 	}
 
-	url := fmt.Sprintf("https://api.notion.com/v1/pages/%s/markdown", pageID)
+	url := fmt.Sprintf("%s/pages/%s/markdown", notionAPIBaseURL, pageID)
 	body := insertContentBody(markdown, position)
 
 	respBody, err := mc.doRequest(withNoReplay(ctx), http.MethodPatch, url, body)
