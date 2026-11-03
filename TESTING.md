@@ -86,6 +86,8 @@ end up in the workspace trash, not hard-deleted.
 
 `acceptance-result` exists so the required checks stay the same when the Terraform matrix changes. It passes only when `build` passed and every acceptance leg passed. On fork PRs it stays red on purpose, because acceptance for forks runs in the separate `Acceptance (fork)` workflow after a maintainer approves the `acceptance` environment. Once that run is green, merge the fork PR with the admin bypass.
 
+Acceptance jobs from every run and branch share one concurrency group, `notion-acceptance-workspace`, with `queue: max`. Only one leg talks to the Notion test workspace at a time, because overlapping runs trip Notion's per-integration rate limit. Waiting legs queue in order instead of being cancelled.
+
 The acceptance matrix covers the three newest Terraform minor versions. When a new minor ships, add it and drop the oldest in both `test.yml` and `acceptance-fork.yml`.
 
 ### Test workspace and secrets

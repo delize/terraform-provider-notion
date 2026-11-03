@@ -19,6 +19,15 @@ jobs:
     if: github.event.pull_request.head.repo.full_name != github.repository
     runs-on: ubuntu-latest
     environment: acceptance
+    # Every acceptance leg in every run uses the same Notion workspace, and
+    # Notion rate-limits the integration (about 3 requests a second). This
+    # group runs one leg at a time across the whole repo. queue: max keeps
+    # waiting legs in line instead of cancelling them. Keep the group name in
+    # sync with test.yml.
+    concurrency:
+      group: notion-acceptance-workspace
+      cancel-in-progress: false
+      queue: max
     strategy:
       fail-fast: false
       max-parallel: 1
