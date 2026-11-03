@@ -143,10 +143,14 @@ func (r *CommentResource) Configure(_ context.Context, req resource.ConfigureReq
 // "exactly one of rich_text/markdown" at the resource boundary. The Notion
 // API also rejects invalid combos, but doing it locally surfaces clearer
 // errors than the API's validation message.
-func (r *CommentResource) validateBody(plan CommentResourceModel, diag interface{ AddError(string, string) }) bool {
+//
+// The parent check only runs on create. After create, discussion_id is
+// filled from Notion even for a comment made with parent_page_id, so an
+// update plan has both set. Neither can change in place anyway.
+func (r *CommentResource) validateBody(plan CommentResourceModel, checkParent bool, diag interface{ AddError(string, string) }) bool {
 	hasParent := plan.ParentPageID.ValueString() != ""
 	hasDiscussion := plan.DiscussionID.ValueString() != "" && !plan.DiscussionID.IsUnknown()
-	if hasParent == hasDiscussion {
+	if checkParent && hasParent == hasDiscussion {
 		diag.AddError("Invalid comment parent",
 			"Exactly one of `parent_page_id` or `discussion_id` must be set.")
 		return false
@@ -167,7 +171,7 @@ func (r *CommentResource) Create(ctx context.Context, req resource.CreateRequest
 	if resp.Diagnostics.HasError() {
 		return
 	}
-	if !r.validateBody(plan, &resp.Diagnostics) {
+	if !r.validateBody(plan, true, &resp.Diagnostics) {
 		return
 	}
 
@@ -252,7 +256,7 @@ func (r *CommentResource) Update(ctx context.Context, req resource.UpdateRequest
 	if resp.Diagnostics.HasError() {
 		return
 	}
-	if !r.validateBody(plan, &resp.Diagnostics) {
+	if !r.validateBody(plan, false, &resp.Diagnostics) {
 		return
 	}
 
