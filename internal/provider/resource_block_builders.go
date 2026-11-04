@@ -190,20 +190,14 @@ func buildBlockForCreate(plan BlockResourceModel) (notionapi.Block, error) {
 			SyncedBlock: synced,
 		}, nil
 
-	case "column_list":
-		return &notionapi.ColumnListBlock{
-			BasicBlock: notionapi.BasicBlock{Object: notionapi.ObjectTypeBlock, Type: notionapi.BlockTypeColumnList},
-			ColumnList: notionapi.ColumnList{},
-		}, nil
-
 	case "column":
-		return &notionapi.ColumnBlock{
-			BasicBlock: notionapi.BasicBlock{Object: notionapi.ObjectTypeBlock, Type: notionapi.BlockTypeColumn},
-			Column:     notionapi.Column{},
-		}, nil
+		// Notion rejects a column with no children, and ModifyPlan refuses
+		// this at plan time, so reaching it is a provider bug.
+		return nil, fmt.Errorf("a column can't be created on its own, use a column_list with columns")
 
-	case "heading_4", "tab", "callout":
-		// The SDK doesn't model these (or, for callout, its icon union).
+	case "heading_4", "tab", "callout", "column_list":
+		// The SDK doesn't model these (or, for callout, its icon union, and
+		// for column_list, the nested columns Notion requires on create).
 		// resource_block_raw.go creates them over direct HTTP, so reaching
 		// this is a provider bug.
 		return nil, fmt.Errorf("block type %q is built by the direct HTTP path, not the SDK builder", blockType)
@@ -463,9 +457,6 @@ func readBlockIntoState(block notionapi.Block, state *BlockResourceModel) {
 			state.SyncedFrom = types.StringValue(normalizeID(string(b.SyncedBlock.SyncedFrom.BlockID)))
 		}
 
-	case *notionapi.ColumnListBlock:
-		// No additional fields
-
 	case *notionapi.ColumnBlock:
 		// No additional fields
 	}
@@ -480,5 +471,8 @@ func readBlockIntoState(block notionapi.Block, state *BlockResourceModel) {
 	}
 	if state.Checked.IsNull() || state.Checked.IsUnknown() {
 		state.Checked = types.BoolValue(false)
+	}
+	if state.Columns.IsUnknown() {
+		state.Columns = types.ListNull(columnObjectType)
 	}
 }

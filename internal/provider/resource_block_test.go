@@ -133,6 +133,101 @@ resource "notion_block" "tab_content" {
 `, parentPageID, title, colorLine, tabItems)
 }
 
+// TestAccBlockColumnList covers column_list, which Notion only creates with
+// at least two columns that each hold a child block. Steps: create two
+// columns with a content block in each, add a third column, remove it
+// again, import, then set width_ratio on both columns in place. Every step
+// ends with the framework's empty-plan check, which proves the untracked
+// placeholder paragraph in each column doesn't read as drift. The content
+// blocks stay parented on columns[N].id throughout, so none is replaced.
+func TestAccBlockColumnList(t *testing.T) {
+	parentPageID := os.Getenv("NOTION_TEST_PARENT_PAGE_ID")
+	if parentPageID == "" {
+		t.Skip("NOTION_TEST_PARENT_PAGE_ID not set")
+	}
+	parentPageID = makeIsolatedParentPage(t, notionTestClient(t), "column-list")
+	title := fmt.Sprintf("tf-acc-test-column-list-%s", testRunSuffix())
+
+	contentStays := resource.ComposeAggregateTestCheckFunc(
+		resource.TestCheckResourceAttrPair("notion_block.left", "parent_id", "notion_block.cols", "columns.0.id"),
+		resource.TestCheckResourceAttrPair("notion_block.right", "parent_id", "notion_block.cols", "columns.1.id"),
+		resource.TestCheckResourceAttr("notion_block.left", "rich_text", "Left column"),
+		resource.TestCheckResourceAttr("notion_block.right", "rich_text", "Right column"),
+	)
+
+	resource.Test(t, resource.TestCase{
+		ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
+		Steps: []resource.TestStep{
+			{
+				Config: testAccBlockColumnListConfig(parentPageID, title, `[{}, {}]`),
+				Check: resource.ComposeAggregateTestCheckFunc(
+					resource.TestCheckResourceAttr("notion_block.cols", "type", "column_list"),
+					resource.TestCheckResourceAttr("notion_block.cols", "has_children", "true"),
+					resource.TestCheckResourceAttr("notion_block.cols", "columns.#", "2"),
+					resource.TestCheckResourceAttrSet("notion_block.cols", "columns.0.id"),
+					resource.TestCheckResourceAttrSet("notion_block.cols", "columns.1.id"),
+					contentStays,
+				),
+			},
+			{
+				Config: testAccBlockColumnListConfig(parentPageID, title, `[{}, {}, {}]`),
+				Check: resource.ComposeAggregateTestCheckFunc(
+					resource.TestCheckResourceAttr("notion_block.cols", "columns.#", "3"),
+					resource.TestCheckResourceAttrSet("notion_block.cols", "columns.2.id"),
+					contentStays,
+				),
+			},
+			{
+				Config: testAccBlockColumnListConfig(parentPageID, title, `[{}, {}]`),
+				Check: resource.ComposeAggregateTestCheckFunc(
+					resource.TestCheckResourceAttr("notion_block.cols", "columns.#", "2"),
+					contentStays,
+				),
+			},
+			{
+				ResourceName:      "notion_block.cols",
+				ImportState:       true,
+				ImportStateVerify: true,
+			},
+			{
+				Config: testAccBlockColumnListConfig(parentPageID, title, `[{ width_ratio = 0.25 }, { width_ratio = 0.75 }]`),
+				Check: resource.ComposeAggregateTestCheckFunc(
+					resource.TestCheckResourceAttr("notion_block.cols", "columns.0.width_ratio", "0.25"),
+					resource.TestCheckResourceAttr("notion_block.cols", "columns.1.width_ratio", "0.75"),
+					contentStays,
+				),
+			},
+		},
+	})
+}
+
+func testAccBlockColumnListConfig(parentPageID, title, columns string) string {
+	return fmt.Sprintf(`
+resource "notion_page" "test" {
+  parent_page_id = %q
+  title          = %q
+}
+
+resource "notion_block" "cols" {
+  parent_id = notion_page.test.id
+  type      = "column_list"
+  columns   = %s
+}
+
+resource "notion_block" "left" {
+  parent_id = notion_block.cols.columns[0].id
+  type      = "paragraph"
+  rich_text = "Left column"
+}
+
+resource "notion_block" "right" {
+  parent_id = notion_block.cols.columns[1].id
+  type      = "paragraph"
+  rich_text = "Right column"
+}
+`, parentPageID, title, columns)
+}
+
 // TestAccBlockDefaultColor checks that a heading_1 with no color plans empty
 // after create even though Notion reports its color as "default", that an
 // explicit "default" round-trips, and that removing a color resets it in

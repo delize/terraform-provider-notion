@@ -5,11 +5,14 @@ import (
 	"fmt"
 
 	"github.com/hashicorp/terraform-plugin-framework/attr"
+	"github.com/hashicorp/terraform-plugin-framework/diag"
 	"github.com/hashicorp/terraform-plugin-framework/path"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/booldefault"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/boolplanmodifier"
+	"github.com/hashicorp/terraform-plugin-framework/resource/schema/float64planmodifier"
+	"github.com/hashicorp/terraform-plugin-framework/resource/schema/listplanmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/planmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/stringdefault"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/stringplanmodifier"
@@ -22,6 +25,7 @@ var (
 	_ resource.Resource                   = &BlockResource{}
 	_ resource.ResourceWithImportState    = &BlockResource{}
 	_ resource.ResourceWithValidateConfig = &BlockResource{}
+	_ resource.ResourceWithModifyPlan     = &BlockResource{}
 )
 
 type BlockResource struct {
@@ -46,6 +50,7 @@ type BlockResourceModel struct {
 	Expression   types.String `tfsdk:"expression"`
 	SyncedFrom   types.String `tfsdk:"synced_from"`
 	TabItems     types.List   `tfsdk:"tab_items"`
+	Columns      types.List   `tfsdk:"columns"`
 
 	IconName          types.String `tfsdk:"icon_name"`
 	IconColor         types.String `tfsdk:"icon_color"`
@@ -235,14 +240,50 @@ func (r *BlockResource) Schema(_ context.Context, _ resource.SchemaRequest, resp
 					},
 				},
 			},
+			"columns": schema.ListNestedAttribute{
+				Description: "Columns of a column_list block, in order. Required to create a column_list, which needs at least two columns, and not allowed on other types. " +
+					"Put a column's content in it with notion_block resources whose parent_id is the column's id. " +
+					"Notion won't create an empty column, so each new column starts with one empty paragraph, which the provider doesn't track. " +
+					"Columns are matched by position. A changed width_ratio updates that column in place, new columns are added at the end, " +
+					"and removing columns from the end deletes those columns and their content.",
+				Optional: true,
+				Computed: true,
+				PlanModifiers: []planmodifier.List{
+					listplanmodifier.UseStateForUnknown(),
+				},
+				NestedObject: schema.NestedAttributeObject{
+					Attributes: map[string]schema.Attribute{
+						"id": schema.StringAttribute{
+							Description: "Block ID of the column. Use it as parent_id for the column's content.",
+							Computed:    true,
+							// UseStateForUnknown would copy a null into a column
+							// added at the end, since that position has no prior state.
+							PlanModifiers: []planmodifier.String{
+								stringplanmodifier.UseNonNullStateForUnknown(),
+							},
+						},
+						"width_ratio": schema.Float64Attribute{
+							Description: "Width of the column as a share of the list, greater than 0 and less than 1. " +
+								"Set it on every column or on none, and the values must add up to 1. When unset, Notion splits the width evenly " +
+								"and any width Notion reports, for example after a resize in the app, is accepted without a diff.",
+							Optional: true,
+							Computed: true,
+							PlanModifiers: []planmodifier.Float64{
+								float64planmodifier.UseNonNullStateForUnknown(),
+							},
+						},
+					},
+				},
+			},
 		},
 	}
 }
 
-// ValidateConfig checks the callout icon rules and the tab-specific rules.
+// ValidateConfig checks the callout icon rules and the tab and column_list rules.
 // The non-emoji icon attributes are only valid on a callout and follow the
 // same rules as on notion_page. tab_items is required for a tab and only
-// valid there, and a tab has no text or color of its own.
+// valid there, and a tab has no text or color of its own. columns follows
+// the same pattern for column_list, see validateColumnsConfig.
 func (r *BlockResource) ValidateConfig(ctx context.Context, req resource.ValidateConfigRequest, resp *resource.ValidateConfigResponse) {
 	var cfg BlockResourceModel
 	resp.Diagnostics.Append(req.Config.Get(ctx, &cfg)...)
@@ -261,6 +302,14 @@ func (r *BlockResource) ValidateConfig(ctx context.Context, req resource.Validat
 		}
 	}
 
+	if cfg.Type.ValueString() == "column_list" {
+		validateColumnsConfig(ctx, cfg.Columns, &resp.Diagnostics)
+		rejectContainerText(cfg, "column_list", "Put content in the columns with notion_block resources.", &resp.Diagnostics)
+	} else if !cfg.Columns.IsNull() {
+		resp.Diagnostics.AddAttributeError(path.Root("columns"), "columns not allowed",
+			fmt.Sprintf("columns only applies to blocks of type column_list, not %q.", cfg.Type.ValueString()))
+	}
+
 	if cfg.Type.ValueString() != "tab" {
 		if !cfg.TabItems.IsNull() {
 			resp.Diagnostics.AddAttributeError(path.Root("tab_items"), "tab_items not allowed",
@@ -277,6 +326,12 @@ func (r *BlockResource) ValidateConfig(ctx context.Context, req resource.Validat
 			"Notion requires at least one tab item when a tab block exists.")
 	}
 
+	rejectContainerText(cfg, "tab", "Set labels and icons in tab_items.", &resp.Diagnostics)
+}
+
+// rejectContainerText flags the text and color attributes on a container
+// block type that has neither of its own.
+func rejectContainerText(cfg BlockResourceModel, blockType, hint string, diags *diag.Diagnostics) {
 	for name, v := range map[string]attr.Value{
 		"rich_text":      cfg.RichText,
 		"rich_text_json": cfg.RichTextJSON,
@@ -284,9 +339,103 @@ func (r *BlockResource) ValidateConfig(ctx context.Context, req resource.Validat
 		"icon":           cfg.Icon,
 	} {
 		if !v.IsNull() {
-			resp.Diagnostics.AddAttributeError(path.Root(name), "Attribute not used by tab blocks",
-				fmt.Sprintf("%s has no effect on a tab block. Set labels and icons in tab_items.", name))
+			diags.AddAttributeError(path.Root(name), fmt.Sprintf("Attribute not used by %s blocks", blockType),
+				fmt.Sprintf("%s has no effect on a %s block. %s", name, blockType, hint))
 		}
+	}
+}
+
+// validateColumnsConfig checks a configured columns list against the
+// Append block children rules. A column list is created with 2 to 100
+// columns, and width_ratio is between 0 and 1 (exclusive). The block
+// reference says ratios "should add up to 1" when provided. Mixing set and
+// unset ratios isn't described anywhere, so it's refused rather than
+// guessed at. A missing columns list is checked in ModifyPlan, since an
+// existing column list may leave it unset.
+func validateColumnsConfig(ctx context.Context, l types.List, diags *diag.Diagnostics) {
+	if l.IsNull() || l.IsUnknown() {
+		return
+	}
+	n := len(l.Elements())
+	if n < 2 {
+		diags.AddAttributeError(path.Root("columns"), "Too few columns",
+			fmt.Sprintf("Notion requires a column_list to have at least two columns, got %d.", n))
+	}
+	if n > 100 {
+		diags.AddAttributeError(path.Root("columns"), "Too many columns",
+			fmt.Sprintf("Notion accepts at most 100 columns in a column_list, got %d.", n))
+	}
+
+	var cols []columnModel
+	if d := l.ElementsAs(ctx, &cols, true); d.HasError() {
+		return
+	}
+	set, sum := 0, 0.0
+	for i, c := range cols {
+		if c.WidthRatio.IsUnknown() {
+			return
+		}
+		if c.WidthRatio.IsNull() {
+			continue
+		}
+		v := c.WidthRatio.ValueFloat64()
+		if v <= 0 || v >= 1 {
+			diags.AddAttributeError(path.Root("columns").AtListIndex(i).AtName("width_ratio"), "Invalid width_ratio",
+				fmt.Sprintf("width_ratio must be greater than 0 and less than 1, got %g.", v))
+		}
+		set++
+		sum += v
+	}
+	if set > 0 && set < len(cols) {
+		diags.AddAttributeError(path.Root("columns"), "Set width_ratio on every column or none",
+			fmt.Sprintf("%d of %d columns set width_ratio. Notion expects the ratios of a column list to add up to 1, so set it on all of them or leave it out.", set, len(cols)))
+	} else if set > 0 && (sum < 0.99 || sum > 1.01) {
+		diags.AddAttributeError(path.Root("columns"), "width_ratio values must add up to 1",
+			fmt.Sprintf("The width_ratio values add up to %g. Notion expects them to add up to 1.", sum))
+	}
+}
+
+// ModifyPlan keeps columns null on block types that don't use it, so they
+// don't plan a computed value, and rejects creating a column_list without
+// columns or a standalone column. Both are create-time checks, so a column
+// list or column imported by an earlier version keeps working.
+func (r *BlockResource) ModifyPlan(ctx context.Context, req resource.ModifyPlanRequest, resp *resource.ModifyPlanResponse) {
+	if req.Plan.Raw.IsNull() {
+		return
+	}
+	var planType types.String
+	var cfgColumns types.List
+	resp.Diagnostics.Append(req.Plan.GetAttribute(ctx, path.Root("type"), &planType)...)
+	resp.Diagnostics.Append(req.Config.GetAttribute(ctx, path.Root("columns"), &cfgColumns)...)
+	if resp.Diagnostics.HasError() || planType.IsNull() || planType.IsUnknown() {
+		return
+	}
+	blockType := planType.ValueString()
+
+	if blockType != "column_list" && cfgColumns.IsNull() {
+		resp.Diagnostics.Append(resp.Plan.SetAttribute(ctx, path.Root("columns"), types.ListNull(columnObjectType))...)
+	}
+
+	creating := req.State.Raw.IsNull()
+	if !creating {
+		var stateType types.String
+		resp.Diagnostics.Append(req.State.GetAttribute(ctx, path.Root("type"), &stateType)...)
+		creating = stateType.ValueString() != blockType
+	}
+	if !creating {
+		return
+	}
+	switch blockType {
+	case "column_list":
+		if cfgColumns.IsNull() {
+			resp.Diagnostics.AddAttributeError(path.Root("columns"), "Missing columns",
+				"A new column_list needs at least two entries in columns. Notion only creates a column list together with its columns.")
+		}
+	case "column":
+		resp.Diagnostics.AddAttributeError(path.Root("type"), "Create columns through column_list",
+			"A column can't be created on its own. Notion requires every column to have content when it's created, and the columns of a "+
+				"column_list are managed by its columns attribute. Use a column_list block with a columns entry for each column, and "+
+				"parent content blocks on columns[N].id.")
 	}
 }
 
@@ -312,7 +461,7 @@ func (r *BlockResource) Create(ctx context.Context, req resource.CreateRequest, 
 
 	if isRawBlockType(plan.Type.ValueString()) {
 		resp.Diagnostics.Append(r.createRawBlock(ctx, &plan)...)
-		// Once the block exists, save it even if reading its tab items
+		// Once the block exists, save it even if reading its tab items or columns
 		// failed, so Terraform taints it rather than losing track of it.
 		if plan.ID.IsUnknown() || plan.ID.ValueString() == "" {
 			return
@@ -364,7 +513,7 @@ func (r *BlockResource) Read(ctx context.Context, req resource.ReadRequest, resp
 		return
 	}
 
-	// heading_4, tab, and callout go over direct HTTP. After an import the
+	// heading_4, tab, callout, and column_list go over direct HTTP. After an import the
 	// type isn't known yet, so fetch the raw block once to find out.
 	if state.Type.IsNull() || state.Type.IsUnknown() || isRawBlockType(state.Type.ValueString()) {
 		token, err := tokenForClient(r.client)

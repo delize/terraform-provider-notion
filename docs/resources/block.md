@@ -122,23 +122,38 @@ While `rich_text_json` is set, `rich_text` isn't read from Notion and keeps its 
 
 ### Columns
 
+A `column_list` block holds side-by-side columns. Notion only creates a column list together with its columns, at least two of them, so list them in `columns`. Each column's `id` is exported, so add a column's content with `notion_block` resources whose `parent_id` is that column's `id`.
+
 ```terraform
 resource "notion_block" "cols" {
   parent_id = notion_page.my_page.id
   type      = "column_list"
+  columns = [
+    { width_ratio = 0.25 },
+    { width_ratio = 0.75 },
+  ]
 }
 
-resource "notion_block" "col1" {
-  parent_id = notion_block.cols.id
-  type      = "column"
-}
-
-resource "notion_block" "col1_text" {
-  parent_id = notion_block.col1.id
+resource "notion_block" "left_text" {
+  parent_id = notion_block.cols.columns[0].id
   type      = "paragraph"
   rich_text = "Left column"
 }
+
+resource "notion_block" "right_text" {
+  parent_id = notion_block.cols.columns[1].id
+  type      = "paragraph"
+  rich_text = "Right column"
+}
 ```
+
+Leave out `width_ratio` (for example `columns = [{}, {}]`) to split the width evenly. When it's set, set it on every column, and the values must add up to 1.
+
+Notion won't create an empty column, so each new column starts with one empty paragraph and your content goes after it. The provider doesn't track that paragraph, so it never shows as a diff, and you can delete it in the Notion app once the column has other content.
+
+Columns are matched by position. Changing a `width_ratio` updates that column in place, and new entries are added at the end. Removing entries from the end deletes those columns along with everything in them, including blocks that other `notion_block` resources manage, so remove those resources in the same change. A `column_list` needs at least two columns, and `rich_text`, `rich_text_json`, `color`, and `icon` don't apply to it.
+
+A `column` can't be created on its own, since Notion needs content in a column when it's created and the list's `columns` attribute manages them. Use a `column_list` instead. A column or column list imported with an earlier version of the provider keeps working, and a column list whose config leaves out `columns` reads them but doesn't manage them.
 
 ### Heading 4
 
@@ -205,6 +220,9 @@ Tabs are matched by position. Changing a label or icon updates that tab in place
   - `label` (String, Required) Tab label. Supports markdown links.
   - `icon` (String, Optional) Emoji shown next to the label. A native Notion icon set in the app reads back as `""`. Notion's API can set or change a tab icon but can't remove it, so removing `icon` from a tab that has one fails before anything is sent. Remove the icon in the Notion app first, then from the config.
   - `id` (String, Read-Only) Block ID of the tab. Use it as `parent_id` for the tab's content.
+- `columns` (Attributes List) Columns of a `column_list` block, in order. Required to create a `column_list`, which needs between 2 and 100 columns, and not allowed on other types. Each entry has:
+  - `width_ratio` (Number, Optional) Width of the column as a share of the list, greater than 0 and less than 1. Set it on every column or on none, and the values must add up to 1. When it's unset, Notion splits the width evenly, and a width Notion reports anyway (for example after a resize in the app) is read into state without a diff. Removing `width_ratio` from the config leaves the column's current width alone.
+  - `id` (String, Read-Only) Block ID of the column. Use it as `parent_id` for the column's content.
 
 ### Read-Only
 
@@ -234,8 +252,8 @@ Tabs are matched by position. Changing a label or icon updates that tab in place
 | `embed` | Embed | url |
 | `image` | Image | url, caption |
 | `synced_block` | Synced block | synced_from |
-| `column_list` | Columns container | (none) |
-| `column` | Column | (none) |
+| `column_list` | Columns container | columns |
+| `column` | Column | (none, import only) |
 | `tab` | Tabs | tab_items |
 
 ## Import
