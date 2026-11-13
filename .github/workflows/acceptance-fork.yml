@@ -31,9 +31,10 @@ jobs:
     strategy:
       fail-fast: false
       max-parallel: 1
-      # Keep in sync with test.yml.
+      # The newest Terraform minor only, like a same-repo PR in test.yml.
+      # Main runs all three after the merge. Keep in sync with test.yml.
       matrix:
-        terraform: ['1.15.*', '1.16.*', '1.17.*']
+        terraform: ['1.17.*']
     env:
       TF_ACC: "1"
       NOTION_TOKEN: ${{ secrets.NOTION_TOKEN }}
@@ -63,4 +64,6 @@ jobs:
           terraform_wrapper: false
       - run: go build ./...
       - run: go vet ./...
-      - run: go test ./internal/provider/ -v -timeout 120m
+      # The acceptance tests only. test.yml's build job runs the rest on
+      # the PR without secrets.
+      - run: go test ./internal/provider/ -v -timeout 120m -run ^TestAcc

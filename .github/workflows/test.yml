@@ -75,10 +75,14 @@ jobs:
       # Serialize matrix runs. Every leg hits the same Notion workspace and
       # concurrent runs trip rate limiting and interfere with each other.
       max-parallel: 1
-      # Rolling window of the three newest Terraform minors. Keep in sync
-      # with acceptance-fork.yml.
+      # Rolling window of the three newest Terraform minors on main, the
+      # weekly run and manual runs. A pull request runs the newest only:
+      # the legs run one at a time behind every other open PR, and three of
+      # them made a PR wait an hour or more. A break on an older minor shows
+      # up on main after the merge. Keep the newest in sync with
+      # acceptance-fork.yml.
       matrix:
-        terraform: ['1.15.*', '1.16.*', '1.17.*']
+        terraform: ${{ fromJSON(github.event_name == 'pull_request' && '["1.17.*"]' || '["1.15.*", "1.16.*", "1.17.*"]') }}
     env:
       TF_ACC: "1"
       NOTION_TOKEN: ${{ secrets.NOTION_TOKEN }}
@@ -98,7 +102,11 @@ jobs:
         with:
           terraform_version: ${{ matrix.terraform }}
           terraform_wrapper: false
-      - run: go test ./internal/provider/ -v -timeout 120m
+      # On a pull request only the acceptance tests run here. The build job
+      # has already run the rest on the newest Terraform, which is this
+      # leg's version too. On main every test runs on every version, so the
+      # plan-only unit tests still meet the older minors.
+      - run: go test ./internal/provider/ -v -timeout 120m ${{ github.event_name == 'pull_request' && '-run ^TestAcc' || '' }}
 
   # One stable check name for branch protection, so the required checks
   # don't change every time the Terraform matrix does.
