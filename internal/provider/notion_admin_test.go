@@ -263,8 +263,25 @@ func TestAdminClient_PaginatesLists(t *testing.T) {
 	}
 }
 
+// useFastRetries gives requests made with token a client whose retries wait
+// milliseconds. Without it a test that expects a 409 conflict_error sits
+// through the real backoff, about 30 seconds, before it sees the error.
+func useFastRetries(t *testing.T, token string) {
+	t.Helper()
+	prev, had := providerHTTPClients.Load(token)
+	registerHTTPClient(token, &http.Client{Transport: newTestTransport()})
+	t.Cleanup(func() {
+		if had {
+			providerHTTPClients.Store(token, prev)
+		} else {
+			providerHTTPClients.Delete(token)
+		}
+	})
+}
+
 func TestAdminClient_ErrorsAreTyped(t *testing.T) {
 	f, _ := newFakeAdminAPI(t)
+	useFastRetries(t, f.token)
 	c := &adminClient{token: f.token}
 	ctx := context.Background()
 
